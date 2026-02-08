@@ -101,3 +101,23 @@ message HeartbeatReply {
     int64 server_time = 1;
     VersionInfo version_info = 2;
 }
+
+// ============ 上报分享点击 ============
+// 用于已登录状态下处理分享链接（触发好友申请）
+message ReportArkClickRequest {
+    int64 sharer_id = 1;
+    string sharer_open_id = 2;
+    int64 share_cfg_id = 3;
+    string scene_id = 4;
+}
+
+message ReportArkClickReply {
+    // 通常为空响应
+}
+
+// ============ 服务器推送通知 ============
+
+// 基本信息变化通知 (升级/金币变化等)
+message BasicNotify {
+    BasicInfo basic = 1;
+}

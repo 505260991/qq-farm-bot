@@ -5,20 +5,33 @@
 const protobuf = require('protobufjs');
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('./config');
 const { types } = require('./proto');
-const { sendMsgAsync, getUserState } = require('./network');
+const { sendMsgAsync, getUserState, networkEvents } = require('./network');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep } = require('./utils');
+const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime } = require('./gameConfig');
 
 // ============ 内部状态 ============
 let isCheckingFarm = false;
 let isFirstFarmCheck = true;
 let farmCheckTimer = null;
+let farmLoopRunning = false;
 
 // ============ 农场 API ============
+
+// 操作限制更新回调 (由 friend.js 设置)
+let onOperationLimitsUpdate = null;
+function setOperationLimitsCallback(callback) {
+    onOperationLimitsUpdate = callback;
+}
 
 async function getAllLands() {
     const body = types.AllLandsRequest.encode(types.AllLandsRequest.create({})).finish();
     const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'AllLands', body);
-    return types.AllLandsReply.decode(replyBody);
+    const reply = types.AllLandsReply.decode(replyBody);
+    // 更新操作限制
+    if (reply.operation_limits && onOperationLimitsUpdate) {
+        onOperationLimitsUpdate(reply.operation_limits);
+    }
+    return reply;
 }
 
 async function harvest(landIds) {
@@ -60,6 +73,32 @@ async function insecticide(landIds) {
     })).finish();
     const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Insecticide', body);
     return types.InsecticideReply.decode(replyBody);
+}
+
+// 普通肥料 ID
+const NORMAL_FERTILIZER_ID = 1011;
+
+/**
+ * 施肥 - 必须逐块进行，服务器不支持批量
+ * 游戏中拖动施肥间隔很短，这里用 50ms
+ */
+async function fertilize(landIds, fertilizerId = NORMAL_FERTILIZER_ID) {
+    let successCount = 0;
+    for (const landId of landIds) {
+        try {
+            const body = types.FertilizeRequest.encode(types.FertilizeRequest.create({
+                land_ids: [toLong(landId)],
+                fertilizer_id: toLong(fertilizerId),
+            })).finish();
+            await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', body);
+            successCount++;
+        } catch (e) {
+            // 施肥失败（可能肥料不足），停止继续
+            break;
+        }
+        if (landIds.length > 1) await sleep(50);  // 50ms 间隔
+    }
+    return successCount;
 }
 
 async function removePlant(landIds) {
@@ -105,21 +144,21 @@ function encodePlantRequest(seedId, landIds) {
     return writer.finish();
 }
 
+/**
+ * 种植 - 游戏中拖动种植间隔很短，这里用 50ms
+ */
 async function plantSeeds(seedId, landIds) {
     let successCount = 0;
     for (const landId of landIds) {
         try {
             const body = encodePlantRequest(seedId, [landId]);
-            if (successCount === 0) {
-                log('种植', `seed_id=${seedId} land_id=${landId} hex=${Buffer.from(body).toString('hex')}`);
-            }
             const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Plant', body);
             types.PlantReply.decode(replyBody);
             successCount++;
         } catch (e) {
             logWarn('种植', `土地#${landId} 失败: ${e.message}`);
         }
-        await sleep(300);
+        if (landIds.length > 1) await sleep(50);  // 50ms 间隔
     }
     return successCount;
 }
@@ -169,7 +208,10 @@ async function findBestSeed() {
         return null;
     }
 
-    available.sort((a, b) => b.requiredLevel - a.requiredLevel);
+    // 按等级要求排序
+    // 取最高等级种子: available.sort((a, b) => b.requiredLevel - a.requiredLevel);
+    // 暂时改为取最低等级种子 (白萝卜)
+    available.sort((a, b) => a.requiredLevel - b.requiredLevel);
     return available[0];
 }
 
@@ -177,25 +219,17 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
     let landsToPlant = [...emptyLandIds];
     const state = getUserState();
 
-    // 1. 铲除枯死/收获残留植物
+    // 1. 铲除枯死/收获残留植物（一键操作）
     if (deadLandIds.length > 0) {
         try {
             await removePlant(deadLandIds);
-            log('铲除', `已铲除 ${deadLandIds.length} 块作物残留 (${deadLandIds.join(',')})`);
+            log('铲除', `已铲除 ${deadLandIds.length} 块 (${deadLandIds.join(',')})`);
             landsToPlant.push(...deadLandIds);
         } catch (e) {
-            logWarn('铲除', `批量铲除失败: ${e.message}, 尝试逐块铲除...`);
-            for (const landId of deadLandIds) {
-                try {
-                    await removePlant([landId]);
-                    landsToPlant.push(landId);
-                } catch (e2) {
-                    landsToPlant.push(landId);
-                }
-                await sleep(300);
-            }
+            logWarn('铲除', `批量铲除失败: ${e.message}`);
+            // 失败时仍然尝试种植
+            landsToPlant.push(...deadLandIds);
         }
-        await sleep(500);
     }
 
     if (landsToPlant.length === 0) return;
@@ -210,7 +244,10 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
     }
     if (!bestSeed) return;
 
-    log('商店', `最佳种子: goods_id=${bestSeed.goodsId} item_id=${bestSeed.seedId} 价格=${bestSeed.price}金币 (等级要求:${bestSeed.requiredLevel})`);
+    const seedName = getPlantNameBySeedId(bestSeed.seedId);
+    const growTime = getPlantGrowTime(1020000 + (bestSeed.seedId - 20000));  // 转换为植物ID
+    const growTimeStr = growTime > 0 ? ` 生长${formatGrowTime(growTime)}` : '';
+    log('商店', `最佳种子: ${seedName} (${bestSeed.seedId}) 价格=${bestSeed.price}金币${growTimeStr}`);
 
     // 3. 购买
     const needCount = landsToPlant.length;
@@ -238,19 +275,31 @@ async function autoPlantEmptyLands(deadLandIds, emptyLandIds) {
                 state.gold -= toNum(item.count);
             }
         }
-        log('购买', `已购买种子x${landsToPlant.length}, 花费 ${bestSeed.price * landsToPlant.length} 金币, seed_id=${actualSeedId}`);
+        const boughtName = getPlantNameBySeedId(actualSeedId);
+        log('购买', `已购买 ${boughtName}种子 x${landsToPlant.length}, 花费 ${bestSeed.price * landsToPlant.length} 金币`);
     } catch (e) {
         logWarn('购买', e.message);
         return;
     }
-    await sleep(500);
 
-    // 4. 种植
+    // 4. 种植（逐块拖动，间隔50ms）
+    let plantedLands = [];
     try {
         const planted = await plantSeeds(actualSeedId, landsToPlant);
         log('种植', `已在 ${planted} 块地种植 (${landsToPlant.join(',')})`);
+        if (planted > 0) {
+            plantedLands = landsToPlant.slice(0, planted);
+        }
     } catch (e) {
         logWarn('种植', e.message);
+    }
+
+    // 5. 施肥（逐块拖动，间隔50ms）
+    if (plantedLands.length > 0) {
+        const fertilized = await fertilize(plantedLands);
+        if (fertilized > 0) {
+            log('施肥', `已为 ${fertilized}/${plantedLands.length} 块地施肥`);
+        }
     }
 }
 
@@ -296,6 +345,7 @@ function analyzeLands(lands) {
     const result = {
         harvestable: [], needWater: [], needWeed: [], needBug: [],
         growing: [], empty: [], dead: [],
+        harvestableInfo: [],  // 收获植物的详细信息 { id, name, exp }
     };
 
     const nowSec = getServerTimeSec();
@@ -345,7 +395,17 @@ function analyzeLands(lands) {
 
         if (phaseVal === PlantPhase.MATURE) {
             result.harvestable.push(id);
-            if (debug) console.log(`    → 结果: 可收获`);
+            // 收集植物信息用于日志
+            const plantId = toNum(plant.id);
+            const plantNameFromConfig = getPlantName(plantId);
+            const plantExp = getPlantExp(plantId);
+            result.harvestableInfo.push({
+                landId: id,
+                plantId,
+                name: plantNameFromConfig || plantName,
+                exp: plantExp,
+            });
+            if (debug) console.log(`    → 结果: 可收获 (${plantNameFromConfig} +${plantExp}经验)`);
             continue;
         }
 
@@ -413,55 +473,61 @@ async function checkFarm() {
         const status = analyzeLands(lands);
         isFirstFarmCheck = false;
 
+        // 构建状态摘要
         const statusParts = [];
-        if (status.harvestable.length) statusParts.push(`可收获:${status.harvestable.length}(${status.harvestable.join(',')})`);
-        if (status.needWater.length) statusParts.push(`缺水:${status.needWater.length}(${status.needWater.join(',')})`);
-        if (status.needWeed.length) statusParts.push(`有草:${status.needWeed.length}(${status.needWeed.join(',')})`);
-        if (status.needBug.length) statusParts.push(`有虫:${status.needBug.length}(${status.needBug.join(',')})`);
-        if (status.growing.length) statusParts.push(`生长中:${status.growing.length}`);
-        if (status.empty.length) statusParts.push(`空地:${status.empty.length}`);
-        if (status.dead.length) statusParts.push(`枯死:${status.dead.length}`);
+        if (status.harvestable.length) statusParts.push(`收:${status.harvestable.length}`);
+        if (status.needWeed.length) statusParts.push(`草:${status.needWeed.length}`);
+        if (status.needBug.length) statusParts.push(`虫:${status.needBug.length}`);
+        if (status.needWater.length) statusParts.push(`水:${status.needWater.length}`);
+        if (status.dead.length) statusParts.push(`枯:${status.dead.length}`);
+        if (status.empty.length) statusParts.push(`空:${status.empty.length}`);
+        statusParts.push(`长:${status.growing.length}`);
 
-        log('巡田', statusParts.length > 0 ? statusParts.join(' | ') : '一切正常');
-        log('巡田', `服务器时间: ${new Date(getServerTimeSec() * 1000).toLocaleString()}`);
+        const hasWork = status.harvestable.length || status.needWeed.length || status.needBug.length
+            || status.needWater.length || status.dead.length || status.empty.length;
 
+        // 执行操作并收集结果
+        const actions = [];
+
+        // 一键操作：除草、除虫、浇水可以并行执行（游戏中都是一键完成）
+        const batchOps = [];
         if (status.needWeed.length > 0) {
-            try { await weedOut(status.needWeed); log('除草', `已除草 ${status.needWeed.length} 块地 (${status.needWeed.join(',')})`); } catch (e) { logWarn('除草', e.message); }
-            await sleep(500);
+            batchOps.push(weedOut(status.needWeed).then(() => actions.push(`除草${status.needWeed.length}`)).catch(e => logWarn('除草', e.message)));
         }
-
         if (status.needBug.length > 0) {
-            try { await insecticide(status.needBug); log('除虫', `已除虫 ${status.needBug.length} 块地 (${status.needBug.join(',')})`); } catch (e) { logWarn('除虫', e.message); }
-            await sleep(500);
+            batchOps.push(insecticide(status.needBug).then(() => actions.push(`除虫${status.needBug.length}`)).catch(e => logWarn('除虫', e.message)));
         }
-
         if (status.needWater.length > 0) {
-            try { await waterLand(status.needWater); log('浇水', `已浇水 ${status.needWater.length} 块地 (${status.needWater.join(',')})`); } catch (e) { logWarn('浇水', e.message); }
-            await sleep(500);
+            batchOps.push(waterLand(status.needWater).then(() => actions.push(`浇水${status.needWater.length}`)).catch(e => logWarn('浇水', e.message)));
+        }
+        if (batchOps.length > 0) {
+            await Promise.all(batchOps);
         }
 
+        // 收获（一键操作）
         let harvestedLandIds = [];
         if (status.harvestable.length > 0) {
             try {
                 await harvest(status.harvestable);
-                log('收获', `已收获 ${status.harvestable.length} 块地 (${status.harvestable.join(',')})`);
+                actions.push(`收获${status.harvestable.length}`);
                 harvestedLandIds = [...status.harvestable];
             } catch (e) { logWarn('收获', e.message); }
-            await sleep(500);
         }
 
+        // 铲除 + 种植 + 施肥（需要顺序执行）
         const allDeadLands = [...status.dead, ...harvestedLandIds];
         const allEmptyLands = [...status.empty];
         if (allDeadLands.length > 0 || allEmptyLands.length > 0) {
-            try { await autoPlantEmptyLands(allDeadLands, allEmptyLands); } catch (e) { logWarn('自动种植', e.message); }
-            await sleep(500);
+            try {
+                await autoPlantEmptyLands(allDeadLands, allEmptyLands);
+                actions.push(`种植${allDeadLands.length + allEmptyLands.length}`);
+            } catch (e) { logWarn('种植', e.message); }
         }
 
-        const actionCount = status.needWeed.length + status.needBug.length
-            + status.needWater.length + status.harvestable.length
-            + status.dead.length + allEmptyLands.length;
-        if (actionCount === 0) {
-            log('巡田', '无需操作，等待下次检查...');
+        // 输出一行日志
+        const actionStr = actions.length > 0 ? ` → ${actions.join('/')}` : '';
+        if(hasWork) {
+            log('农场', `[${statusParts.join(' ')}]${actionStr}${!hasWork ? ' 无需操作' : ''}`)
         }
     } catch (err) {
         logWarn('巡田', `检查失败: ${err.message}`);
@@ -470,18 +536,55 @@ async function checkFarm() {
     }
 }
 
+/**
+ * 农场巡查循环 - 本次完成后等待指定秒数再开始下次
+ */
+async function farmCheckLoop() {
+    while (farmLoopRunning) {
+        await checkFarm();
+        if (!farmLoopRunning) break;
+        await sleep(CONFIG.farmCheckInterval);
+    }
+}
+
 function startFarmCheckLoop() {
-    log('挂机', `农场自动巡查已启动 (每 ${CONFIG.farmCheckInterval / 1000} 秒)`);
-    setTimeout(() => checkFarm(), 2000);
-    if (farmCheckTimer) clearInterval(farmCheckTimer);
-    farmCheckTimer = setInterval(() => checkFarm(), CONFIG.farmCheckInterval);
+    if (farmLoopRunning) return;
+    farmLoopRunning = true;
+
+    // 监听服务器推送的土地变化事件
+    networkEvents.on('landsChanged', onLandsChangedPush);
+
+    // 延迟 2 秒后启动循环
+    farmCheckTimer = setTimeout(() => farmCheckLoop(), 2000);
+}
+
+/**
+ * 处理服务器推送的土地变化
+ */
+let lastPushTime = 0;
+function onLandsChangedPush(lands) {
+    if (isCheckingFarm) return;
+    const now = Date.now();
+    if (now - lastPushTime < 500) return;  // 500ms 防抖
+    
+    lastPushTime = now;
+    log('农场', `收到推送: ${lands.length}块土地变化，检查中...`);
+    
+    setTimeout(async () => {
+        if (!isCheckingFarm) {
+            await checkFarm();
+        }
+    }, 100);
 }
 
 function stopFarmCheckLoop() {
-    if (farmCheckTimer) { clearInterval(farmCheckTimer); farmCheckTimer = null; }
+    farmLoopRunning = false;
+    if (farmCheckTimer) { clearTimeout(farmCheckTimer); farmCheckTimer = null; }
+    networkEvents.removeListener('landsChanged', onLandsChangedPush);
 }
 
 module.exports = {
     checkFarm, startFarmCheckLoop, stopFarmCheckLoop,
     getCurrentPhase,
+    setOperationLimitsCallback,
 };

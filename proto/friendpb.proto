@@ -60,3 +60,61 @@ message SyncAllReply {
     // repeated Invitation invitations = 2;  // 略
     int64 application_count = 3;
 }
+
+// ============ 好友申请 (微信同玩) ============
+
+// 申请信息
+message Application {
+    int64 gid = 1;
+    int64 time_at = 2;
+    string open_id = 3;
+    string name = 4;
+    string avatar_url = 5;
+    int64 level = 6;
+    // repeated AvatarFrame equip_avatar_frames = 7;  // 略
+}
+
+// --- 获取好友申请列表 ---
+message GetApplicationsRequest {}
+
+message GetApplicationsReply {
+    repeated Application applications = 1;
+    bool block_applications = 2;  // 是否屏蔽申请
+}
+
+// --- 同意好友申请 ---
+message AcceptFriendsRequest {
+    repeated int64 friend_gids = 1;
+}
+
+message AcceptFriendsReply {
+    repeated GameFriend friends = 1;
+}
+
+// --- 拒绝好友申请 ---
+message RejectFriendsRequest {
+    repeated int64 friend_gids = 1;
+}
+
+message RejectFriendsReply {}
+
+// --- 设置屏蔽申请 ---
+message SetBlockApplicationsRequest {
+    bool block = 1;
+}
+
+message SetBlockApplicationsReply {
+    bool block = 1;
+}
+
+// ============ 服务器推送通知 ============
+
+// 收到好友申请通知
+message FriendApplicationReceivedNotify {
+    repeated Application applications = 1;
+}
+
+// 好友添加成功通知 (对方同意后)
+message FriendAddedNotify {
+    repeated GameFriend friends = 1;
+}

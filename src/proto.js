@@ -21,6 +21,9 @@ async function loadProto() {
         path.join(protoDir, 'shoppb.proto'),
         path.join(protoDir, 'friendpb.proto'),
         path.join(protoDir, 'visitpb.proto'),
+        path.join(protoDir, 'notifypb.proto'),
+        path.join(protoDir, 'taskpb.proto'),
+        path.join(protoDir, 'itempb.proto'),
     ], { keepCase: true });
 
     // 网关
@@ -33,6 +36,8 @@ async function loadProto() {
     types.LoginReply = root.lookupType('gamepb.userpb.LoginReply');
     types.HeartbeatRequest = root.lookupType('gamepb.userpb.HeartbeatRequest');
     types.HeartbeatReply = root.lookupType('gamepb.userpb.HeartbeatReply');
+    types.ReportArkClickRequest = root.lookupType('gamepb.userpb.ReportArkClickRequest');
+    types.ReportArkClickReply = root.lookupType('gamepb.userpb.ReportArkClickReply');
 
     // 农场
     types.AllLandsRequest = root.lookupType('gamepb.plantpb.AllLandsRequest');
@@ -47,6 +52,18 @@ async function loadProto() {
     types.InsecticideReply = root.lookupType('gamepb.plantpb.InsecticideReply');
     types.RemovePlantRequest = root.lookupType('gamepb.plantpb.RemovePlantRequest');
     types.RemovePlantReply = root.lookupType('gamepb.plantpb.RemovePlantReply');
+    types.PutInsectsRequest = root.lookupType('gamepb.plantpb.PutInsectsRequest');
+    types.PutInsectsReply = root.lookupType('gamepb.plantpb.PutInsectsReply');
+    types.PutWeedsRequest = root.lookupType('gamepb.plantpb.PutWeedsRequest');
+    types.PutWeedsReply = root.lookupType('gamepb.plantpb.PutWeedsReply');
+    types.FertilizeRequest = root.lookupType('gamepb.plantpb.FertilizeRequest');
+    types.FertilizeReply = root.lookupType('gamepb.plantpb.FertilizeReply');
+
+    // 背包/仓库
+    types.BagRequest = root.lookupType('gamepb.itempb.BagRequest');
+    types.BagReply = root.lookupType('gamepb.itempb.BagReply');
+    types.SellRequest = root.lookupType('gamepb.itempb.SellRequest');
+    types.SellReply = root.lookupType('gamepb.itempb.SellReply');
     types.PlantRequest = root.lookupType('gamepb.plantpb.PlantRequest');
     types.PlantReply = root.lookupType('gamepb.plantpb.PlantReply');
 
@@ -61,6 +78,10 @@ async function loadProto() {
     // 好友
     types.GetAllFriendsRequest = root.lookupType('gamepb.friendpb.GetAllRequest');
     types.GetAllFriendsReply = root.lookupType('gamepb.friendpb.GetAllReply');
+    types.GetApplicationsRequest = root.lookupType('gamepb.friendpb.GetApplicationsRequest');
+    types.GetApplicationsReply = root.lookupType('gamepb.friendpb.GetApplicationsReply');
+    types.AcceptFriendsRequest = root.lookupType('gamepb.friendpb.AcceptFriendsRequest');
+    types.AcceptFriendsReply = root.lookupType('gamepb.friendpb.AcceptFriendsReply');
 
     // 访问
     types.VisitEnterRequest = root.lookupType('gamepb.visitpb.EnterRequest');
@@ -68,7 +89,25 @@ async function loadProto() {
     types.VisitLeaveRequest = root.lookupType('gamepb.visitpb.LeaveRequest');
     types.VisitLeaveReply = root.lookupType('gamepb.visitpb.LeaveReply');
 
-    log('Proto', '所有协议定义加载成功');
+    // 任务
+    types.TaskInfoRequest = root.lookupType('gamepb.taskpb.TaskInfoRequest');
+    types.TaskInfoReply = root.lookupType('gamepb.taskpb.TaskInfoReply');
+    types.ClaimTaskRewardRequest = root.lookupType('gamepb.taskpb.ClaimTaskRewardRequest');
+    types.ClaimTaskRewardReply = root.lookupType('gamepb.taskpb.ClaimTaskRewardReply');
+    types.BatchClaimTaskRewardRequest = root.lookupType('gamepb.taskpb.BatchClaimTaskRewardRequest');
+    types.BatchClaimTaskRewardReply = root.lookupType('gamepb.taskpb.BatchClaimTaskRewardReply');
+
+    // 服务器推送通知
+    types.LandsNotify = root.lookupType('gamepb.plantpb.LandsNotify');
+    types.BasicNotify = root.lookupType('gamepb.userpb.BasicNotify');
+    types.KickoutNotify = root.lookupType('gatepb.KickoutNotify');
+    types.FriendApplicationReceivedNotify = root.lookupType('gamepb.friendpb.FriendApplicationReceivedNotify');
+    types.FriendAddedNotify = root.lookupType('gamepb.friendpb.FriendAddedNotify');
+    types.ItemNotify = root.lookupType('gamepb.itempb.ItemNotify');
+    types.GoodsUnlockNotify = root.lookupType('gamepb.shoppb.GoodsUnlockNotify');
+    types.TaskInfoNotify = root.lookupType('gamepb.taskpb.TaskInfoNotify');
+
+    // Proto 加载完成
 }
 
 function getRoot() {
