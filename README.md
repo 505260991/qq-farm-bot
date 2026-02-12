@@ -105,7 +105,7 @@
 ### 克隆仓库
 
 ```bash
-git clone https://github.com/MoeGrid/qq-farm-bot.git
+git clone https://github.com/Hygge9/qq-farm-bot.git
 cd qq-farm-bot
 ```
 
