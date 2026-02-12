@@ -22,15 +22,37 @@
 
     <!-- 登录区 -->
     <div class="section login-section" v-if="!status.connected">
-      <div class="login-row">
-        <el-input v-model="code" placeholder="请输入 code" class="login-input"/>
-        <el-button type="primary" :loading="connecting" @click="handleConnect">连接</el-button>
+      <div class="login-tabs">
+        <div class="login-tab" :class="{ active: loginMethod === 'code' }" @click="loginMethod = 'code'">Code 登录</div>
+        <div class="login-tab" :class="{ active: loginMethod === 'qr' }" @click="loginMethod = 'qr'">扫码登录</div>
       </div>
-      <div class="platform-row">
-        <el-radio-group v-model="platform" size="small">
-          <el-radio value="qq">QQ</el-radio>
-          <el-radio value="wx">微信</el-radio>
-        </el-radio-group>
+
+      <div v-if="loginMethod === 'code'" class="login-content">
+        <div class="login-row">
+          <el-input v-model="code" placeholder="请输入 code" class="login-input"/>
+          <el-button type="primary" :loading="connecting" @click="handleConnect">连接</el-button>
+        </div>
+        <div class="platform-row">
+          <el-radio-group v-model="platform" size="small">
+            <el-radio value="qq">QQ</el-radio>
+            <el-radio value="wx">微信</el-radio>
+          </el-radio-group>
+        </div>
+      </div>
+
+      <div v-else class="login-content qr-content">
+        <div v-if="qrUrl" class="qr-wrapper">
+          <img :src="qrUrl" alt="QR Code" class="qr-img" />
+          <div class="qr-status" :class="qrStatusClass">{{ qrStatusText }}</div>
+          <div v-if="qrExpired" class="qr-refresh" @click="getQrCode">
+            <el-icon><Refresh /></el-icon>
+            <span>点击刷新</span>
+          </div>
+        </div>
+        <div v-else class="qr-placeholder" v-loading="qrLoading">
+          <el-button @click="getQrCode">获取二维码</el-button>
+        </div>
+        <div class="qr-tip">请使用手机 QQ 扫码登录</div>
       </div>
     </div>
     <div class="section connected-bar" v-else>
@@ -136,13 +158,13 @@
 </template>
 
 <script setup>
-import {ref, computed, onMounted, watch} from 'vue'
+import {ref, computed, onMounted, watch, onUnmounted} from 'vue'
 import {ElMessage} from 'element-plus'
-import {QuestionFilled} from '@element-plus/icons-vue'
+import {QuestionFilled, Refresh} from '@element-plus/icons-vue'
 import {useBot} from '@/composables/useBot'
 import {useLog} from '@/composables/useLog'
 
-const {status, connecting, connect, disconnect, toggleFeature, getConfig, saveConfig, getPlantPlan, refreshStatus} = useBot()
+const {status, connecting, connect, disconnect, toggleFeature, getConfig, saveConfig, getPlantPlan, refreshStatus, getLoginQr, checkLoginQr} = useBot()
 const {recentLogs, loadLogs} = useLog()
 
 const code = ref('')
@@ -150,6 +172,16 @@ const platform = ref('qq')
 const plantPlan = ref(null)
 const plantMode = ref('fast')
 const plantSeedId = ref(0)
+const loginMethod = ref('code')
+
+// QR Login State
+const qrUrl = ref('')
+const qrSig = ref('')
+const qrLoading = ref(false)
+const qrStatusText = ref('等待扫码...')
+const qrStatusClass = ref('') // 'success' | 'error' | ''
+const qrExpired = ref(false)
+let qrTimer = null
 
 const recent = recentLogs(5)
 
@@ -201,6 +233,7 @@ const friendFeatures = [
 ]
 const systemFeatures = [
   {key: 'autoTask', label: '自动任务', desc: '自动领取完成的任务奖励'},
+  {key: 'enableNotifications', label: '消息通知', desc: '启用游戏内消息通知系统'},
 ]
 
 async function handleConnect() {
@@ -221,6 +254,7 @@ async function handleConnect() {
 async function handleDisconnect() {
   await disconnect()
   plantPlan.value = null
+  stopQrCheck()
 }
 
 async function loadPlantPlan() {
@@ -240,6 +274,76 @@ async function handlePlantSeedChange(seedId) {
   await saveConfig({plantMode: 'manual', plantSeedId: seedId})
 }
 
+// === QR Login Logic ===
+
+async function getQrCode() {
+  qrLoading.value = true
+  qrExpired.value = false
+  qrStatusText.value = '获取中...'
+  qrStatusClass.value = ''
+  
+  try {
+    const res = await getLoginQr()
+    if (res.success) {
+      qrUrl.value = res.qrcode
+      qrSig.value = res.qrsig
+      qrStatusText.value = '等待扫码...'
+      startQrCheck()
+    } else {
+      qrStatusText.value = '获取失败'
+      qrStatusClass.value = 'error'
+      ElMessage.error(res.error || '获取二维码失败')
+    }
+  } catch (e) {
+    qrStatusText.value = '获取失败'
+    qrStatusClass.value = 'error'
+    console.error(e)
+  } finally {
+    qrLoading.value = false
+  }
+}
+
+function startQrCheck() {
+  stopQrCheck()
+  qrTimer = setInterval(async () => {
+    try {
+      const res = await checkLoginQr(qrSig.value)
+      if (!res.success) {
+        // error
+        return
+      }
+      
+      if (res.ret === '0') {
+        // success
+        stopQrCheck()
+        qrStatusText.value = '登录成功'
+        qrStatusClass.value = 'success'
+        code.value = res.code
+        ElMessage.success('扫码登录成功，正在连接...')
+        await handleConnect()
+      } else if (res.ret === '65') {
+        // expired
+        stopQrCheck()
+        qrStatusText.value = '二维码已失效'
+        qrStatusClass.value = 'error'
+        qrExpired.value = true
+      } else {
+        // waiting (66)
+        qrStatusText.value = res.msg || '等待扫码...'
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, 2000)
+}
+
+function stopQrCheck() {
+  if (qrTimer) {
+    clearInterval(qrTimer)
+    qrTimer = null
+  }
+}
+
 onMounted(async () => {
   const config = await getConfig()
   platform.value = config.platform || 'qq'
@@ -252,10 +356,25 @@ onMounted(async () => {
   }
 })
 
+onUnmounted(() => {
+  stopQrCheck()
+})
+
 watch(() => status.connected, (val) => {
   if (val) {
     loadPlantPlan()
     loadLogs()
+    stopQrCheck() // Stop checking if connected
+  }
+})
+
+// Stop QR check when switching tabs
+watch(loginMethod, (val) => {
+  if (val !== 'qr') {
+    stopQrCheck()
+  } else if (!qrUrl.value) {
+    // Auto start if empty
+    getQrCode()
   }
 })
 </script>
@@ -309,6 +428,36 @@ watch(() => status.connected, (val) => {
   justify-content: space-between;
 }
 
+.login-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 8px;
+}
+
+.login-tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.login-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.login-content {
+  min-height: 100px;
+}
+
 .login-row {
   display: flex;
   gap: 8px;
@@ -322,6 +471,72 @@ watch(() => status.connected, (val) => {
 .platform-row {
   display: flex;
   align-items: center;
+}
+
+.qr-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.qr-placeholder {
+  width: 150px;
+  height: 150px;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.qr-wrapper {
+  position: relative;
+  width: 150px;
+  height: 150px;
+}
+
+.qr-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.qr-status {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.qr-status.success {
+  color: var(--color-success);
+}
+
+.qr-status.error {
+  color: var(--color-danger);
+}
+
+.qr-refresh {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.qr-tip {
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .connected-bar {

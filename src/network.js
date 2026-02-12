@@ -156,8 +156,32 @@ function handleNotify(msg) {
             log('推送', `被踢下线! ${type}`);
             try {
                 const notify = types.KickoutNotify.decode(eventBody);
-                log('推送', `原因: ${notify.reason_message || '未知'}`);
-            } catch (e) { }
+                const reasonCode = toNum(notify.reason);
+                const reasonMsg = notify.reason_message || '';
+
+                // 显示详细的踢下线信息
+                if (reasonMsg) {
+                    log('推送', `原因: ${reasonMsg} (code: ${reasonCode})`);
+                } else {
+                    // 根据 reason code 提供更友好的提示
+                    const reasonMap = {
+                        1: '账号在其他地方登录',
+                        2: '登录凭证过期',
+                        3: '服务器维护',
+                        4: '长时间未活动',
+                        0: '服务器主动断开连接'
+                    };
+                    const friendlyMsg = reasonMap[reasonCode] || `未知原因 (code: ${reasonCode})`;
+                    log('推送', `原因: ${friendlyMsg}`);
+
+                    // 如果是长时间未活动，给出提示
+                    if (reasonCode === 4 || reasonCode === 0) {
+                        log('提示', 'Code 可能已过期，需要重新获取并连接');
+                    }
+                }
+            } catch (e) {
+                log('错误', `解析踢下线通知失败: ${e.message}`);
+            }
             networkEvents.emit('kicked');
             return;
         }
@@ -203,6 +227,7 @@ function handleNotify(msg) {
                         networkEvents.emit('stateChanged');
                     }
                 }
+                networkEvents.emit('ItemNotify', notify);
             } catch (e) { }
             return;
         }
@@ -222,11 +247,12 @@ function handleNotify(msg) {
                         updateStatusLevel(userState.level, exp);
                     }
                     updateStatusGold(userState.gold);
-                    // 升级提示
-                    if (userState.level !== oldLevel) {
-                        log('系统', `升级! Lv${oldLevel} → Lv${userState.level}`);
+                    // 升级提示（避免初始化时误报）
+                    if (userState.level !== oldLevel && oldLevel > 0) {
+                        log('系统', `🎉 升级! Lv${oldLevel} → Lv${userState.level}`);
                     }
                     networkEvents.emit('stateChanged');
+                    networkEvents.emit('BasicNotify', notify);
                 }
             } catch (e) { }
             return;
@@ -239,6 +265,7 @@ function handleNotify(msg) {
                 const applications = notify.applications || [];
                 if (applications.length > 0) {
                     networkEvents.emit('friendApplicationReceived', applications);
+                    networkEvents.emit('FriendApplicationReceivedNotify', notify);
                 }
             } catch (e) { }
             return;
@@ -252,6 +279,7 @@ function handleNotify(msg) {
                 if (friends.length > 0) {
                     const names = friends.map(f => f.name || f.remark || `GID:${toNum(f.gid)}`).join(', ');
                     log('好友', `新好友: ${names}`);
+                    networkEvents.emit('FriendAddedNotify', notify);
                 }
             } catch (e) { }
             return;
@@ -276,7 +304,13 @@ function handleNotify(msg) {
                         }
                     }
                     // 经验 ID=2 (升级由 BasicNotify 处理)
+                    // 经验 ID=1101 (另一种经验通知ID)
+                    else if (id === 1101) {
+                        userState.exp = count;
+                        updateStatusLevel(userState.level, count);
+                    }
                 }
+                networkEvents.emit('ItemNotify', notify);
             } catch (e) { }
             return;
         }
@@ -288,6 +322,7 @@ function handleNotify(msg) {
                 const goods = notify.goods_list || [];
                 if (goods.length > 0) {
                     log('商店', `解锁 ${goods.length} 个新商品!`);
+                    networkEvents.emit('GoodsUnlockNotify', notify);
                 }
             } catch (e) { }
             return;
@@ -299,6 +334,7 @@ function handleNotify(msg) {
                 const notify = types.TaskInfoNotify.decode(eventBody);
                 if (notify.task_info) {
                     networkEvents.emit('taskInfoNotify', notify.task_info);
+                    networkEvents.emit('TaskInfoNotify', notify);
                 }
             } catch (e) { }
             return;

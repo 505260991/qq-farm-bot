@@ -10,7 +10,7 @@
 
 通过分析小程序 WebSocket 通信协议（Protocol Buffers），实现全自动农场管理
 
-支持智能种植策略 · 好友互动 · 任务系统 · 实时日志
+支持 **扫码登录** · 智能种植策略 · 好友互动 · 任务系统 · 实时日志
 
 [功能特性](#功能特性) · [快速开始](#安装) · [使用文档](#使用方式) · [技术栈](#技术栈)
 
@@ -19,7 +19,7 @@
 ---
 
 > **💡 项目说明**
-> 本项目基于 [QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot) 进行重构和功能增强，从 Electron 桌面应用 升级为 NodeJS 脚本，使其能在服务器和Docker环境下运行。
+> 本项目融合了多个优秀开源项目的功能，本项目基于[linguo2625469/qq-farm-bot](https://github.com/MoeGrid/qq-farm-bot) 进行重构和功能增强，集成了 [MoeGrid/qq-farm-bot](https://github.com/MoeGrid/qq-farm-bot) 的vue3前端界面设计、[12zyhh/qq-farm-bot](https://github.com/12zyhh/qq-farm-bot) 的页面功能加强以及 [lkeme/QRLib](https://github.com/lkeme/QRLib) 的扫码登录功能，提供更完整、便捷的自动化体验。
 
 ## 📸 应用截图
 
@@ -27,8 +27,8 @@
 <tr>
 <td width="50%">
 <img src="docs/images/首页.png" alt="首页" />
-<p align="center"><b>首页 - 功能开关与种植策略</b></p>
-<p align="center">实时显示农场状态、经验金币，支持独立功能开关和三种种植策略</p>
+<p align="center"><b>首页 - 扫码登录与状态监控</b></p>
+<p align="center">支持扫码直接登录，实时显示农场状态、经验金币</p>
 </td>
 <td width="50%">
 <img src="docs/images/参数配置.png" alt="参数配置" />
@@ -50,6 +50,12 @@
 <table>
 <tr>
 <td width="50%">
+
+### 🔑 登录与连接
+- ✅ **扫码登录** — 支持手机QQ扫码直接登录（新增！）
+- ✅ **Code登录** — 支持手动输入 Code 登录（兼容旧方式）
+- ✅ **心跳保活** — 自动维持 WebSocket 连接
+- ✅ **双平台支持** — QQ 和微信小程序均可使用
 
 ### 🌱 自己农场
 - ✅ **自动收获** — 检测成熟作物并自动收获
@@ -76,7 +82,7 @@
 - ✅ **自动同意好友** — 微信同玩好友申请自动同意
 - ✅ **邀请码处理** — 启动时自动处理邀请链接
 - ✅ **实时状态更新** — 经验/金币/等级实时显示
-- ✅ **心跳保活** — 自动维持 WebSocket 连接
+- ✅ **消息通知** — 游戏内消息通知系统
 
 </td>
 </tr>
@@ -88,8 +94,6 @@
 - 🎛️ **功能开关** — 每个功能可独立开启/关闭，带详细说明
 - 📊 **实时日志** — 查看所有操作记录，支持筛选
 - ⚡ **配置持久化** — 自动保存配置，下次启动自动应用
-- 🔔 **系统托盘** — 最小化到托盘，后台运行不打扰
-- 🔄 **双平台支持** — QQ 和微信小程序均可使用
 
 ## 📦 安装
 
@@ -103,42 +107,47 @@
 ```bash
 git clone https://github.com/MoeGrid/qq-farm-bot.git
 cd qq-farm-bot
-npm install
 ```
 
-## 🔑 获取登录 Code
+## � 使用方式
 
-本工具需要小程序的登录凭证（code）才能连接服务器。code 具有时效性，过期后需重新获取。
+### 1. 启动项目
 
+```bash
+# 1. 安装依赖 (如果尚未安装)
+npm install
+
+# 2. 打包web页面
+npm run build
+
+# 3. 启动后台服务
+npm run serve
+```
+
+启动后访问：`http://localhost:3000`
+
+### 2. 登录账号
+
+#### 方式一：扫码登录 (推荐)
+1. 在首页点击「扫码登录」标签
+2. 使用手机 QQ 扫描屏幕上的二维码
+3. 在手机上确认登录
+4. 系统将自动获取凭证并连接
+
+#### 方式二：手动 Code 登录
+如果扫码登录遇到问题，可以使用传统的抓包方式：
 <details>
-<summary><b>📱 抓包方式（Fiddler）</b></summary>
+<summary><b>点击查看抓包教程（Fiddler）</b></summary>
 
 1. 手机安装 Fiddler 证书，配置代理指向电脑
 2. 电脑打开 Fiddler，开启 HTTPS 解密
 3. 手机打开 QQ/微信 → 进入「经典农场」小程序
 4. 在 Fiddler 中筛选请求，找到 WebSocket 连接或登录请求中的 `code` 参数
-5. 复制 code 值，粘贴到本工具中使用
+5. 复制 code 值，粘贴到本工具「Code 登录」输入框中使用
 
 > **💡 提示**：code 具有时效性，短时间内断开重连可复用同一 code，过期后需重新进入小程序获取。
 
 </details>
-
-## 🚀 使用方式
-
-```bash
-# 打包web页面
-npm run build
-
-# 启动后台服务
-npm run serve
-```
-
-**Web界面提供：**
-- 🎨 可视化操作界面（暗色主题）
-- 🎛️ 功能开关实时切换（带详细说明）
-- 🌱 种植策略配置（快速升级 / 高级作物 / 手动选择）
-- ⏱️ 巡查间隔调整
-- 📋 实时日志查看与筛选
 
 ## 📁 项目结构
 
@@ -148,8 +157,11 @@ npm run serve
 ```
 qq-farm-bot/
 ├── server/            # NodeJS 后端服务
+│   ├── lib/           # 登录库 (QRLib 移植)
+│   ├── login.js       # 登录逻辑
+│   └── ...
 ├── web/               # Vue 3 前端界面
-├── src/               # 核心业务模块（CLI & Electron 共用）
+├── src/               # 核心业务模块
 ├── proto/             # Protobuf 协议定义
 ├── gameConfig/        # 游戏配置数据
 └── docs/              # 项目文档
@@ -158,8 +170,6 @@ qq-farm-bot/
 </details>
 
 ## ⚙️ 配置说明
-
-### Web应用
 
 配置通过界面操作，自动保存到当前目录（`config.json`）：
 
@@ -171,19 +181,11 @@ qq-farm-bot/
 - **巡查间隔**：自己农场 / 好友农场分别设置
 - **功能开关**：每个自动化功能可独立开启/关闭，带详细说明
 
-### 邀请码（仅微信）
-
-在项目根目录的 `share.txt` 中每行放一个邀请链接，启动时自动处理：
-
-```
-?uid=xxx&openid=xxx&share_source=xxx&doc_id=xxx
-```
-
 ## ⚠️ 注意事项
 
-- ⏱️ code 具有时效性，短时间内可复用，过期后需重新从小程序获取
+- ⏱️ code 具有时效性，扫码登录通常更方便，过期后只需重新扫码即可
 - 🔐 同一账号同时只能在一个地方登录，启动本工具后小程序端会被踢下线
-- 🌐 建议在稳定的网络环境下运行，断线后需重新获取 code 连接
+- 🌐 建议在稳定的网络环境下运行
 - 📚 本项目仅供学习交流使用
 
 ## 🛠️ 技术栈
@@ -205,12 +207,6 @@ qq-farm-bot/
 </tr>
 </table>
 
-- **运行时**：Node.js >= 16.0.0
-- **前端框架**：Vue 3 (Composition API)
-- **UI 组件库**：Element Plus (暗色主题)
-- **构建工具**：Vite
-- **通信协议**：WebSocket + Protocol Buffers
-
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
@@ -221,7 +217,16 @@ qq-farm-bot/
 
 ## 🙏 致谢
 
-本项目基于 [QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot) 进行重构和功能增强，感谢原作者的开源贡献。
+本项目融合了以下优秀开源项目的功能，特此感谢原作者的贡献：
+
+1.  **[MoeGrid/qq-farm-bot](https://github.com/MoeGrid/qq-farm-bot)**
+    *   提供了现代化的 Vue 3 前端界面设计、Web 版架构改造。
+2.  **[12zyhh/qq-farm-bot](https://github.com/12zyhh/qq-farm-bot)**
+    *   提供了功能增强。
+3.  **[lkeme/QRLib](https://github.com/lkeme/QRLib)**
+    *   提供了强大的 QQ 扫码登录协议实现，使得本项目能够支持便捷的扫码登录功能。
+
+感谢所有为开源社区做出贡献的开发者！
 
 ---
 
@@ -229,7 +234,7 @@ qq-farm-bot/
 
 ### 📊 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=MoeGrid/qq-farm-bot&type=Date)](https://star-history.com/#MoeGrid/qq-farm-bot&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Hygge9/qq-farm-bot&type=Date)](https://star-history.com/#Hygge9/qq-farm-bot&Date)
 
 **如果觉得项目不错，请点个 ⭐️ Star 支持一下！**
 

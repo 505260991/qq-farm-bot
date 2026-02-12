@@ -5,8 +5,7 @@ const logs = reactive([])
 
 async function loadLogs() {
   const data = await window.electronAPI.invoke('bot:get-logs')
-  logs.length = 0;
-  logs.push(...data)
+  logs.splice(0, logs.length, ...data)
 }
 
 async function clearLogs() {

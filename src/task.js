@@ -178,4 +178,7 @@ module.exports = {
     checkAndClaimTasks,
     initTaskSystem,
     cleanupTaskSystem,
+    getTaskInfo,
+    claimTaskReward,
+    batchClaimTaskReward,
 };
