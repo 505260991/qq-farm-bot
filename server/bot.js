@@ -134,7 +134,7 @@ function startProjectInfoTimer() {
   const outputProjectInfo = () => {
     logEmitter.emit('log', {
       type: 'system',
-      message: '📢 本项目完全开源免费 | GitHub: github.com/12zyhh/qq-farm-bot',
+      message: '📢 本项目完全开源免费 | GitHub: github.com/Hygge9/qq-farm-bot',
       timestamp: Date.now(),
     });
   };
