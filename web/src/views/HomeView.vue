@@ -83,17 +83,35 @@
         </div>
         <div class="feature-group">
           <div class="group-title">好友农场</div>
-          <div class="feature-item" v-for="f in friendFeatures" :key="f.key" :class="{ 'indent': f.indent }">
-            <div class="feature-label">
-              <span :class="{ 'master-label': f.isMaster }">{{ f.label }}</span>
-              <el-tooltip v-if="f.desc" :content="f.desc" placement="top">
-                <el-icon class="help-icon">
-                  <QuestionFilled/>
-                </el-icon>
-              </el-tooltip>
+          <div class="friend-feature-tree">
+            <!-- 主开关 -->
+            <div class="feature-item master-item">
+              <div class="feature-label">
+                <span class="master-label">{{ friendFeatures[0].label }}</span>
+                <el-tooltip v-if="friendFeatures[0].desc" :content="friendFeatures[0].desc" placement="top">
+                  <el-icon class="help-icon"><QuestionFilled/></el-icon>
+                </el-tooltip>
+              </div>
+              <el-switch :model-value="status.features[friendFeatures[0].key] !== false" size="small"
+                         @change="(v) => toggleFeature(friendFeatures[0].key, v)"/>
             </div>
-            <el-switch :model-value="status.features[f.key] !== false" size="small"
-                       @change="(v) => toggleFeature(f.key, v)"/>
+            
+            <!-- 连线容器 -->
+            <div class="tree-children">
+              <div class="tree-line"></div>
+              <!-- 子开关列表 -->
+              <div class="feature-item child-item" v-for="f in friendFeatures.slice(1)" :key="f.key">
+                <div class="feature-label">
+                  <span class="child-connector">└─</span>
+                  <span>{{ f.label }}</span>
+                  <el-tooltip v-if="f.desc" :content="f.desc" placement="top">
+                    <el-icon class="help-icon"><QuestionFilled/></el-icon>
+                  </el-tooltip>
+                </div>
+                <el-switch :model-value="status.features[f.key] !== false" size="small"
+                           @change="(v) => toggleFeature(f.key, v)"/>
+              </div>
+            </div>
           </div>
         </div>
         <div class="feature-group">
@@ -582,18 +600,49 @@ watch(loginMethod, (val) => {
   font-size: 13px;
 }
 
-.feature-item.indent {
-  padding-left: 16px;
+.friend-feature-tree {
+  display: flex;
+  flex-direction: column;
 }
 
-.feature-label {
+.master-item {
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--color-border);
+  margin-bottom: 4px;
+}
+
+.tree-children {
+  position: relative;
+  padding-left: 12px;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+}
+
+.tree-line {
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 14px; /* 留出最后一行的高度 */
+  width: 2px;
+  background-color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+.child-item {
+  padding: 4px 0;
+  position: relative;
+}
+
+.child-connector {
+  color: var(--color-text-secondary);
+  margin-right: 4px;
+  font-family: monospace;
+  font-weight: bold;
 }
 
 .master-label {
   font-weight: 600;
+  color: var(--color-primary);
 }
 
 .help-icon {
