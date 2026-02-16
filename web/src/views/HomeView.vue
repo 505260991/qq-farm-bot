@@ -41,13 +41,15 @@
       </div>
 
       <div v-else class="login-content qr-content">
-        <div v-if="qrUrl" class="qr-wrapper">
-          <img :src="qrUrl" alt="QR Code" class="qr-img" />
-          <div class="qr-status" :class="qrStatusClass">{{ qrStatusText }}</div>
-          <div v-if="qrExpired" class="qr-refresh" @click="getQrCode">
-            <el-icon><Refresh /></el-icon>
-            <span>点击刷新</span>
+        <div v-if="qrUrl" class="qr-container">
+          <div class="qr-wrapper">
+            <img :src="qrUrl" alt="QR Code" class="qr-img" />
+            <div v-if="qrExpired" class="qr-refresh" @click="getQrCode">
+              <el-icon><Refresh /></el-icon>
+              <span>点击刷新</span>
+            </div>
           </div>
+          <div class="qr-status" :class="qrStatusClass">{{ qrStatusText }}</div>
         </div>
         <div v-else class="qr-placeholder" v-loading="qrLoading">
           <el-button @click="getQrCode">获取二维码</el-button>
@@ -479,6 +481,13 @@ watch(loginMethod, (val) => {
   align-items: center;
   justify-content: center;
   gap: 12px;
+}
+
+.qr-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .qr-placeholder {
