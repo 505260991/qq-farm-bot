@@ -31,8 +31,10 @@ const DEFAULT_CONFIG = {
     autoPutBadThings: false, // 暂时关闭放虫放草功能
     autoBuyFertilizer: false,
     autoUnlockLand: true,
+    autoUpgradeLand: false, // 自动升级土地（默认关闭）
     enableNotifications: false, // 是否启用通知系统
   },
+  friendQuietHours: null, // 好友互动静默时段 (默认关闭，null)
   savedCode: '', // 保存的登录 Code
   savedPlatform: 'qq', // 保存的登录平台
   accounts: [],

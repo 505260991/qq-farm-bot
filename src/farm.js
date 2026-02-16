@@ -7,7 +7,7 @@ const { CONFIG, PlantPhase, PHASE_NAMES } = require('./config');
 const { types } = require('./proto');
 const { sendMsgAsync, getUserState, networkEvents } = require('./network');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep } = require('./utils');
-const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime, getPlantBySeedId } = require('./gameConfig');
+const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime, getPlantBySeedId, calculateEfficiency } = require('./gameConfig');
 
 // ============ 内部状态 ============
 let isCheckingFarm = false;
@@ -26,48 +26,92 @@ function getShopCache() { return shopCache; }
 function clearShopCache() { shopCache = null; }
 
 /**
- * 检测可解锁的土地
+ * 检测可解锁或升级的土地
  */
-async function checkUnlockableLands() {
+async function checkAndUpgradeLands() {
   const state = getUserState();
-  if (!state.gid || !CONFIG.features.autoUnlockLand) return;
+  if (!state.gid) return;
   
+  // 开关检查
+  const autoUnlock = CONFIG.features.autoUnlockLand !== false;
+  const autoUpgrade = CONFIG.features.autoUpgradeLand === true; // 默认为 false，需显式开启
+  
+  if (!autoUnlock && !autoUpgrade) return;
+
   const currentLevel = state.level || 0;
   
-  // 如果等级没有变化，不需要检测
-  if (currentLevel <= lastCheckedLevel) return;
+  // 如果等级没有变化，且上次也没有待处理项，可能不需要检测？
+  // 但为了保险（比如金币够了），还是检测一下，或者优化频率
   
   try {
     const landsReply = await getAllLands();
     if (!landsReply.lands || landsReply.lands.length === 0) return;
     
-    const unlockableLands = [];
-    for (const land of landsReply.lands) {
-      if (!land.unlocked && land.could_unlock && land.unlock_condition) {
-        const needLevel = toNum(land.unlock_condition.need_level);
-        const needGold = toNum(land.unlock_condition.need_gold);
-        const landId = toNum(land.id);
-        
-        if (currentLevel >= needLevel) {
-          unlockableLands.push({
-            landId,
-            needLevel,
-            needGold,
-          });
+    // 1. 解锁土地
+    if (autoUnlock) {
+        for (const land of landsReply.lands) {
+            if (!land.unlocked && land.could_unlock) {
+                // 检查条件
+                let canUnlock = true;
+                let needGold = 0;
+                if (land.unlock_condition) {
+                    const needLevel = toNum(land.unlock_condition.need_level);
+                    needGold = toNum(land.unlock_condition.need_gold);
+                    if (currentLevel < needLevel || state.gold < needGold) {
+                        canUnlock = false;
+                    }
+                }
+                
+                if (canUnlock) {
+                    const landId = toNum(land.id);
+                    log('农场', `尝试解锁土地#${landId} (花费 ${needGold} 金币)...`);
+                    try {
+                        await unlockLand(landId);
+                        log('农场', `土地#${landId} 解锁成功!`, { module: 'farm', event: 'unlock_land', landId });
+                        state.gold -= needGold; // 简单扣除本地金币显示
+                    } catch (e) {
+                        logWarn('农场', `土地#${landId} 解锁失败: ${e.message}`);
+                    }
+                    await sleep(1000);
+                }
+            }
         }
-      }
+    }
+
+    // 2. 升级土地
+    if (autoUpgrade) {
+        for (const land of landsReply.lands) {
+            if (land.unlocked && land.could_upgrade) {
+                 // 检查条件
+                 let canUpgrade = true;
+                 let needGold = 0;
+                 if (land.upgrade_condition) {
+                    const needLevel = toNum(land.upgrade_condition.need_level);
+                    needGold = toNum(land.upgrade_condition.need_gold);
+                    if (currentLevel < needLevel || state.gold < needGold) {
+                        canUpgrade = false;
+                    }
+                 }
+
+                 if (canUpgrade) {
+                    const landId = toNum(land.id);
+                    log('农场', `尝试升级土地#${landId} (花费 ${needGold} 金币)...`);
+                    try {
+                        const reply = await upgradeLand(landId);
+                        const newLevel = reply.land ? toNum(reply.land.lands_level) : '?';
+                        log('农场', `土地#${landId} 升级成功! 当前等级: ${newLevel}`, { module: 'farm', event: 'upgrade_land', landId });
+                        state.gold -= needGold;
+                    } catch (e) {
+                        logWarn('农场', `土地#${landId} 升级失败: ${e.message}`);
+                    }
+                    await sleep(1000);
+                 }
+            }
+        }
     }
     
-    if (unlockableLands.length > 0) {
-      lastCheckedLevel = currentLevel;
-      const landList = unlockableLands.map(l => `土地#${l.landId}`).join(', ');
-      log('农场', `检测到可解锁的土地: ${landList}`);
-      for (const land of unlockableLands) {
-        log('农场', `  土地#${land.landId}: 需要等级${land.needLevel}, 金币${land.needGold}`);
-      }
-    }
   } catch (e) {
-    logWarn('解锁检测', e.message);
+    logWarn('土地检测', e.message);
   }
 }
 
@@ -233,6 +277,22 @@ async function removePlant(landIds) {
     return types.RemovePlantReply.decode(replyBody);
 }
 
+async function upgradeLand(landId) {
+    const body = types.UpgradeLandRequest.encode(types.UpgradeLandRequest.create({
+        land_id: toLong(landId),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'UpgradeLand', body);
+    return types.UpgradeLandReply.decode(replyBody);
+}
+
+async function unlockLand(landId) {
+    const body = types.UnlockLandRequest.encode(types.UnlockLandRequest.create({
+        land_id: toLong(landId),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'UnlockLand', body);
+    return types.UnlockLandReply.decode(replyBody);
+}
+
 // ============ 商店 API ============
 
 async function getShopInfo(shopId) {
@@ -359,8 +419,6 @@ async function findBestSeed() {
     }
 
     // 根据策略排序
-    const FERTILIZER_SPEED = 30;
-    const OPERATION_TIME = 15;
     if (currentStrategy === 'advanced') {
         // 高级作物：按单次收获经验降序，同经验按价格降序
         available.sort((a, b) => {
@@ -381,14 +439,31 @@ async function findBestSeed() {
             const plantB = getPlantBySeedId(b.seedId);
             const useA = plantA && String(plantA.id).startsWith('102') ? plantA : null;
             const useB = plantB && String(plantB.id).startsWith('102') ? plantB : null;
-            const growA = useA ? getPlantGrowTime(useA.id) : 9999;
-            const growB = useB ? getPlantGrowTime(useB.id) : 9999;
-            const expA = useA ? (useA.exp || 0) + 1 : 0;
-            const expB = useB ? (useB.exp || 0) + 1 : 0;
-            const cycleA = Math.max(growA - FERTILIZER_SPEED, 1) + OPERATION_TIME + CHECK_INTERVAL;
-            const cycleB = Math.max(growB - FERTILIZER_SPEED, 1) + OPERATION_TIME + CHECK_INTERVAL;
-            const effA = cycleA > 0 ? expA / cycleA : 0;
-            const effB = cycleB > 0 ? expB / cycleB : 0;
+
+            if (!useA) return 1;
+            if (!useB) return -1;
+
+            const metricsA = calculateEfficiency(useA, {
+                fertilizerRatio: 0.2,
+                fertilizerMinReduction: 30,
+                operationTime: 15,
+                includeRemovalExp: true
+            });
+            const metricsB = calculateEfficiency(useB, {
+                fertilizerRatio: 0.2,
+                fertilizerMinReduction: 30,
+                operationTime: 15,
+                includeRemovalExp: true
+            });
+
+            // 考虑巡田间隔对周转率的影响
+            // 由于有智能巡田机制(farmCheckLoop会根据成熟时间缩短等待)，这里不需要再加 CHECK_INTERVAL
+            // 除非机器人是非连续运行的，否则这会误判短周期作物的效率
+            const cycleA = metricsA.totalTime;
+            const cycleB = metricsB.totalTime;
+
+            const effA = cycleA > 0 ? metricsA.totalExp / cycleA : 0;
+            const effB = cycleB > 0 ? metricsB.totalExp / cycleB : 0;
             return effB - effA;
         });
     }
@@ -905,5 +980,5 @@ module.exports = {
   clearShopCache,
   ensureShopCache,
   getLandsDetail,
-  checkUnlockableLands,
+  checkAndUpgradeLands,
 };

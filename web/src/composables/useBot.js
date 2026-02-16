@@ -155,6 +155,11 @@ async function checkLoginQr(qrsig) {
     return await window.electronAPI.invoke('login:check-qr', { qrsig })
 }
 
+// === 数据分析 ===
+async function getPlantRankings(sortBy, maxLevel) {
+    return await window.electronAPI.invoke('analytics:get-plant-rankings', { sortBy, maxLevel })
+}
+
 // === 监听更新 ===
 if (window.electronAPI) {
     window.electronAPI.on('bot:status-update', (data) => {
@@ -198,5 +203,6 @@ export function useBot() {
         clearNotifications,
         getLoginQr,
         checkLoginQr,
+        getPlantRankings,
     }
 }

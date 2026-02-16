@@ -14,6 +14,14 @@
           <el-input-number v-model="friendInterval" :min="1" :max="3600" size="small" />
           <span class="config-unit">秒 (最低1秒)</span>
         </div>
+        <div class="config-row">
+          <span class="config-label">好友静默时段</span>
+          <el-switch v-model="friendQuietEnabled" size="small" style="margin-right: 8px;" />
+          <el-input-number v-model="friendQuietStart" :min="0" :max="23" size="small" controls-position="right" style="width: 60px" :disabled="!friendQuietEnabled" />
+          <span class="separator">至</span>
+          <el-input-number v-model="friendQuietEnd" :min="0" :max="23" size="small" controls-position="right" style="width: 60px" :disabled="!friendQuietEnabled" />
+          <span class="config-unit">点 (不巡查/不偷)</span>
+        </div>
         <div class="config-actions">
           <el-button type="primary" size="small" @click="handleSave" :loading="saving">保存配置</el-button>
         </div>
@@ -23,7 +31,12 @@
     <!-- 种植效率排行 -->
     <div class="section">
       <div class="section-title">
-        种植效率排行
+        <span>
+          种植效率排行
+          <el-tooltip placement="top" content="效率计算考虑了：20%化肥加速(最少30秒)、15秒操作耗时、以及铲除作物的+1经验。这更接近机器人实际挂机效率。">
+            <el-icon class="info-icon"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </span>
         <span class="level-hint" v-if="plantPlan">基于当前等级(Lv{{ plantPlan.currentLevel }})可购买作物计算</span>
       </div>
       <el-table :data="plantPlan?.options || []" size="small" class="dark-table"
@@ -48,12 +61,16 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { useBot } from '@/composables/useBot'
 
 const { status, getConfig, saveConfig, getPlantPlan } = useBot()
 
 const farmInterval = ref(10)
 const friendInterval = ref(1)
+const friendQuietEnabled = ref(false)
+const friendQuietStart = ref(23)
+const friendQuietEnd = ref(7)
 const saving = ref(false)
 const plantPlan = ref(null)
 
@@ -67,6 +84,11 @@ async function handleSave() {
     await saveConfig({
       farmInterval: farmInterval.value,
       friendInterval: friendInterval.value,
+      friendQuietHours: {
+        enabled: friendQuietEnabled.value,
+        start: friendQuietStart.value,
+        end: friendQuietEnd.value
+      }
     })
     ElMessage.success('配置已保存')
   } finally {
@@ -78,6 +100,11 @@ async function loadData() {
   const config = await getConfig()
   farmInterval.value = config.farmInterval || 10
   friendInterval.value = config.friendInterval || 1
+  if (config.friendQuietHours) {
+    friendQuietEnabled.value = !!config.friendQuietHours.enabled
+    friendQuietStart.value = config.friendQuietHours.start ?? 23
+    friendQuietEnd.value = config.friendQuietHours.end ?? 7
+  }
   if (status.connected) {
     try { plantPlan.value = await getPlantPlan() } catch { /* ignore */ }
   }
@@ -118,6 +145,18 @@ watch(() => status.connected, (val) => {
   font-weight: normal;
 }
 
+.section-title span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.info-icon {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  cursor: help;
+}
+
 .config-form {
   display: flex;
   flex-direction: column;
@@ -137,6 +176,11 @@ watch(() => status.connected, (val) => {
 
 .config-unit {
   font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.separator {
+  margin: 0 4px;
   color: var(--color-text-secondary);
 }
 

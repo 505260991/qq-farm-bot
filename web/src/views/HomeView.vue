@@ -245,6 +245,7 @@ const farmFeatures = [
   {key: 'autoWeed', label: '自动除草', desc: '检测并清除杂草'},
   {key: 'autoBug', label: '自动除虫', desc: '检测并消灭害虫'},
   {key: 'autoWater', label: '自动浇水', desc: '检测缺水作物并浇水'},
+  {key: 'autoUpgradeLand', label: '自动升级', desc: '在金币/等级满足时自动升级土地(红/黑土地等)'},
 ]
 const friendFeatures = [
   {key: 'friendPatrol', label: '好友巡查', desc: '遍历好友列表进入农场（主开关）', isMaster: true},

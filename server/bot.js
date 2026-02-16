@@ -10,8 +10,8 @@ const EventEmitter = require('events');
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('../src/config');
 const { loadProto } = require('../src/proto');
 const { connect, cleanup, resetState, getWs, getUserState, networkEvents } = require('../src/network');
-const { startFarmCheckLoop, stopFarmCheckLoop, setOverrideSeedId, setPlantStrategy, getShopCache, clearShopCache, ensureShopCache, getLandsDetail, checkUnlockableLands, getCurrentPhase } = require('../src/farm');
-const { startFriendCheckLoop, stopFriendCheckLoop, setFriendFeatures, getAllFriends, enterFriendFarm, leaveFriendFarm, helpWater, helpWeed, helpInsecticide, stealHarvest, getOperationLimits, getRemainingTimes, canGetExp } = require('../src/friend');
+const { startFarmCheckLoop, stopFarmCheckLoop, setOverrideSeedId, setPlantStrategy, getShopCache, clearShopCache, ensureShopCache, getLandsDetail, checkAndUpgradeLands, getCurrentPhase } = require('../src/farm');
+const { startFriendCheckLoop, stopFriendCheckLoop, setFriendFeatures, getAllFriends, enterFriendFarm, leaveFriendFarm, helpWater, helpWeed, helpInsecticide, stealHarvest, getOperationLimits, getRemainingTimes, canGetExp, oneClickHelp } = require('../src/friend');
 const { initTaskSystem, cleanupTaskSystem, getTaskInfo, claimTaskReward, batchClaimTaskReward } = require('../src/task');
 const { initNotificationSystem, cleanupNotificationSystem, getNotifications, markAsRead, markAllAsRead, clearNotifications, getUnreadCount, setNotificationsEnabled } = require('../src/notifications');
 const { initStatusBar, cleanupStatusBar, setStatusPlatform, statusData, setElectronMode } = require('../src/status');
@@ -24,6 +24,7 @@ const { buyFreeGifts, buyFertilizer } = require('../src/mall');
 // 新增模块
 const store = require('./store');
 const { calculatePlantPlan } = require('./planner');
+const { getPlantRankings } = require('../src/analytics');
 
 // ============ 状态 ============
 const botEvents = new EventEmitter();
@@ -86,7 +87,7 @@ async function init() {
       if (currentStatus.level !== undefined && lastLevel !== 0) {
         if (currentStatus.level > lastLevel) {
           log('系统', `升级了！当前等级: ${currentStatus.level}`);
-          checkUnlockableLands();
+          checkAndUpgradeLands();
         }
         lastLevel = currentStatus.level;
       }
@@ -588,6 +589,18 @@ async function insectFriendLand(gid, landIds) {
   }
 }
 
+async function oneClickHelpFriend(gid, name) {
+  if (!isConnected) {
+    return { success: false, error: '未连接' };
+  }
+  try {
+    const result = await oneClickHelp(gid, name);
+    return result;
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
 function getOperationLimitsData() {
   try {
     const limits = getOperationLimits();
@@ -851,4 +864,6 @@ module.exports = {
   markNotificationAsRead,
   markAllNotificationsAsRead,
   clearAllNotifications,
+  getPlantRankings,
+  oneClickHelpFriend,
 };

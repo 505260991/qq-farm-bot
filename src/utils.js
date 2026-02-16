@@ -62,7 +62,9 @@ function log(tag, msg) {
     // 但由于我们使用了滚动区域 (SCROLL_REGION)，直接 console.log 应该在区域内滚动
     // 为了保险起见，我们可以显式地清除行尾
     if (process.stdout.isTTY) {
-        process.stdout.write('\x1b[2K\r'); // 清除当前行并回车
+        // 不要使用 \r 回车到行首，这可能会导致覆盖问题
+        // 直接输出，让终端处理换行和滚动
+        process.stdout.write('\x1b[2K'); // 清除当前行
         console.log(logMsg);
     } else {
         console.log(logMsg);
@@ -76,7 +78,7 @@ function logWarn(tag, msg) {
     const logMsg = `[${timestamp}] [${tag}] ⚠ ${msg}`;
     
     if (process.stdout.isTTY) {
-        process.stdout.write('\x1b[2K\r');
+        process.stdout.write('\x1b[2K');
         console.log(logMsg);
     } else {
         console.log(logMsg);

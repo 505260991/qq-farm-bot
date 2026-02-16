@@ -15,6 +15,9 @@ let plantConfig = null;
 let plantMap = new Map();  // id -> plant
 let seedToPlant = new Map();  // seed_id -> plant
 let fruitToPlant = new Map();  // fruit_id -> plant (果实ID -> 植物)
+let itemInfoConfig = null;
+let itemInfoMap = new Map();  // item_id -> item
+let seedItemMap = new Map();  // seed_id -> item(type=5)
 
 /**
  * 加载配置文件
@@ -59,6 +62,27 @@ function loadConfigs() {
         }
     } catch (e) {
         console.warn('[配置] 加载 Plant.json 失败:', e.message);
+    }
+
+    // 加载物品配置（含种子/果实价格）
+    try {
+        const itemInfoPath = path.join(configDir, 'ItemInfo.json');
+        if (fs.existsSync(itemInfoPath)) {
+            itemInfoConfig = JSON.parse(fs.readFileSync(itemInfoPath, 'utf8'));
+            itemInfoMap.clear();
+            seedItemMap.clear();
+            for (const item of itemInfoConfig) {
+                const id = Number(item && item.id) || 0;
+                if (id <= 0) continue;
+                itemInfoMap.set(id, item);
+                if (Number(item.type) === 5) {
+                    seedItemMap.set(id, item);
+                }
+            }
+            console.log(`[配置] 已加载物品配置 (${itemInfoConfig.length} 项)`);
+        }
+    } catch (e) {
+        console.warn('[配置] 加载 ItemInfo.json 失败:', e.message);
     }
 }
 
@@ -208,6 +232,24 @@ function getPlantByFruitId(fruitId) {
     return fruitToPlant.get(fruitId);
 }
 
+function getAllPlants() {
+    return Array.from(plantMap.values());
+}
+
+function getItemById(itemId) {
+    return itemInfoMap.get(Number(itemId) || 0);
+}
+
+function getSeedPrice(seedId) {
+    const item = seedItemMap.get(Number(seedId) || 0);
+    return item ? (Number(item.price) || 0) : 0;
+}
+
+function getFruitPrice(fruitId) {
+    const item = itemInfoMap.get(Number(fruitId) || 0);
+    return item ? (Number(item.price) || 0) : 0;
+}
+
 // 启动时加载配置
 loadConfigs();
 
@@ -228,4 +270,62 @@ module.exports = {
     // 果实配置
     getFruitName,
     getPlantByFruitId,
+    getAllPlants,
+    getSeedPrice,
+    getFruitPrice,
+    getItemById,
+    calculateEfficiency,
 };
+
+/**
+ * 计算作物效率（统一算法）
+ * @param {object} plant - 作物对象
+ * @param {object} options - 计算选项
+ * @param {number} options.fertilizerReduction - 固定减少秒数 (优先级高于 ratio)
+ * @param {number} options.fertilizerRatio - 减少比例 (如 0.2 表示 20%)
+ * @param {number} options.fertilizerMinReduction - 比例计算时的最小减少秒数
+ * @param {number} options.operationTime - 额外操作时间(秒)
+ * @param {boolean} options.includeRemovalExp - 是否包含铲除经验(+1)
+ * @returns {object}
+ */
+function calculateEfficiency(plant, options = {}) {
+    const growTime = getPlantGrowTime(plant.id);
+    if (growTime <= 0) return { growTime: 0, expPerHour: 0 };
+
+    // 1. 计算施肥后的生长时间
+    let reducedTime = 0;
+    if (options.fertilizerReduction > 0) {
+        reducedTime = options.fertilizerReduction;
+    } else if (options.fertilizerRatio > 0) {
+        const ratioReduce = growTime * options.fertilizerRatio;
+        if (options.fertilizerMinReduction > 0 && ratioReduce < options.fertilizerMinReduction) {
+            reducedTime = options.fertilizerMinReduction;
+        } else {
+            reducedTime = ratioReduce;
+        }
+    }
+
+    // 实际生长时间至少为1秒
+    const growTimeWithFert = Math.max(growTime - reducedTime, 1);
+
+    // 2. 加上操作时间
+    const opTime = options.operationTime || 0;
+    const totalTime = growTimeWithFert + opTime;
+
+    // 3. 计算总经验
+    let totalExp = (plant.exp || 0);
+    if (options.includeRemovalExp) {
+        totalExp += 1;
+    }
+
+    // 4. 计算效率
+    const expPerHour = totalTime > 0 ? (totalExp / totalTime) * 3600 : 0;
+
+    return {
+        growTime,
+        growTimeWithFert,
+        totalTime,
+        totalExp,
+        expPerHour: parseFloat(expPerHour.toFixed(2)),
+    };
+}

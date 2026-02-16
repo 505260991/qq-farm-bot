@@ -31,6 +31,8 @@ message Message {
     bytes body = 2;
 }
 
+// ============ 服务器推送通知 ============
+
 // 服务器推送事件
 message EventMessage {
     string message_type = 1;
@@ -42,3 +44,18 @@ message KickoutNotify {
     int64 reason = 1;
     string reason_message = 2;
 }
+
+// ============ plantpb 引用占位 (实际使用时通过 lookupType 查找) ============
+// 由于 Protobufjs 动态加载机制，我们不需要在这里显式 import 只要 loadProto 时加载了 plantpb.proto
+// 但为了 .proto 文件本身的合法性（如果用 protoc 编译），这里仅定义必要的 gatepb 结构
+// 升级/解锁等请求实际属于 gamepb.plantpb 包，不应直接定义在 gatepb 包下
+// 上面的 RemovePlantRequest 等定义是为了解决报错而临时添加的，但正确的做法应该是修改 proto.js 加载逻辑
+// 或者把所有 proto 合并。
+// 
+// 鉴于目前是单文件 game.proto 承载所有，我们需要把 gamepb.plantpb 的内容也定义进来，或者修正包名。
+// 但根据报错 `no such type: gamepb.plantpb.UpgradeLandRequest`，说明代码里是去 `gamepb.plantpb` 找的。
+// 而当前文件 package 是 `gatepb`。
+//
+// 解决方案：将 plantpb 相关定义移到一个新的 package 或文件中，并在 proto.js 中加载。
+// 为了简单起见，我将把相关定义追加到文件末尾，并使用正确的 package 声明。
+

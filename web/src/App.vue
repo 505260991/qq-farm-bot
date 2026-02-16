@@ -55,6 +55,7 @@ const navItems = computed(() => [
   { path: '/friends', icon: '👥', label: '好友' },
   { path: '/tasks', icon: '✅', label: '任务' },
   { path: '/limits', icon: '⛔', label: '限制' },
+  { path: '/analytics', icon: '📊', label: '分析' },
   { path: '/notifications', icon: '🔔', label: '通知', badge: unreadCount.value },
   { path: '/settings', icon: '⚙️', label: '设置' },
   { path: '/logs', icon: '📜', label: '日志' },

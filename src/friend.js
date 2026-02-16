@@ -52,6 +52,22 @@ function setFriendFeatures(features) {
     if (features.autoPutBadThings !== undefined) enablePutBadThings = features.autoPutBadThings !== false;
 }
 
+function isQuietHour() {
+    const quiet = CONFIG.features && CONFIG.features.friendQuietHours || CONFIG.friendQuietHours;
+    if (!quiet || !quiet.enabled || typeof quiet.start !== 'number' || typeof quiet.end !== 'number') return false;
+    
+    const now = new Date();
+    const hour = now.getHours();
+    const { start, end } = quiet;
+    
+    if (start <= end) {
+        return hour >= start && hour < end;
+    } else {
+        // 跨夜，例如 23:00 - 07:00
+        return hour >= start || hour < end;
+    }
+}
+
 // ============ 好友 API ============
 
 async function getAllFriends() {
@@ -536,11 +552,81 @@ async function visitFriend(friend, totalActions, myGid) {
     await leaveFriendFarm(gid);
 }
 
+/**
+ * 一键帮助好友 (手动触发)
+ * 自动检测并执行浇水、除草、除虫
+ */
+async function oneClickHelp(friendGid, friendName) {
+    const actions = [];
+    try {
+        const enterReply = await enterFriendFarm(friendGid);
+        const lands = enterReply.lands || [];
+        if (lands.length === 0) {
+            await leaveFriendFarm(friendGid);
+            return { success: true, actions: [] };
+        }
+
+        const state = getUserState();
+        const status = analyzeFriendLands(lands, state.gid, friendName);
+
+        // 帮助操作 (忽略经验限制，手动操作视为强制执行)
+        // 浇水
+        if (status.needWater.length > 0) {
+            let ok = 0;
+            for (const landId of status.needWater) {
+                try { await helpWater(friendGid, [landId]); ok++; } catch (e) { /* ignore */ }
+                await sleep(100);
+            }
+            if (ok > 0) actions.push(`浇水${ok}`);
+        }
+
+        // 除草
+        if (status.needWeed.length > 0) {
+            let ok = 0;
+            for (const landId of status.needWeed) {
+                try { await helpWeed(friendGid, [landId]); ok++; } catch (e) { /* ignore */ }
+                await sleep(100);
+            }
+            if (ok > 0) actions.push(`除草${ok}`);
+        }
+
+        // 除虫
+        if (status.needBug.length > 0) {
+            let ok = 0;
+            for (const landId of status.needBug) {
+                try { await helpInsecticide(friendGid, [landId]); ok++; } catch (e) { /* ignore */ }
+                await sleep(100);
+            }
+            if (ok > 0) actions.push(`除虫${ok}`);
+        }
+
+        if (actions.length > 0) {
+            log('好友', `手动帮助 [${friendName}]: ${actions.join('/')}`);
+        }
+
+        await leaveFriendFarm(friendGid);
+        return { success: true, actions };
+    } catch (e) {
+        logWarn('好友', `手动帮助 [${friendName}] 失败: ${e.message}`);
+        return { success: false, error: e.message };
+    }
+}
+
 // ============ 好友巡查主循环 ============
 
 async function checkFriends() {
     const state = getUserState();
     if (isCheckingFriends || !state.gid) return;
+    
+    // 检查静默时段
+    if (isQuietHour()) {
+        if (!isFirstFriendCheck) { // 首次运行不静默，至少检查一次
+             // 可以选择完全跳过，或者只跳过操作但仍获取列表
+             // 这里选择完全跳过，减少请求
+             return;
+        }
+    }
+
     isCheckingFriends = true;
 
     // 检查是否跨日需要重置
@@ -741,5 +827,5 @@ module.exports = {
     getAllFriends,
     checkFriends, startFriendCheckLoop, stopFriendCheckLoop,
     checkAndAcceptApplications, setFriendFeatures, enterFriendFarm, stealHarvest,helpWeed,
-    getOperationLimits, getRemainingTimes, canGetExp, helpInsecticide, helpWater
+    getOperationLimits, getRemainingTimes, canGetExp, helpInsecticide, helpWater, oneClickHelp
 };

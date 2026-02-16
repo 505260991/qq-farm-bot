@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/limits', name: 'limits', component: () => import('@/views/LimitsView.vue') },
     { path: '/notifications', name: 'notifications', component: () => import('@/views/NotificationsView.vue') },
     { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue') },
+    { path: '/analytics', name: 'analytics', component: () => import('@/views/AnalyticsView.vue') },
     { path: '/logs', name: 'logs', component: () => import('@/views/LogView.vue') },
   ],
 })

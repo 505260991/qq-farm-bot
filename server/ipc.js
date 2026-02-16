@@ -161,6 +161,10 @@ function registerIPC(server) {
             return bot.insectFriendLand(gid, landIds);
         });
 
+        handle(socket, 'friend-farm:one-click-help', ({ gid, name }) => {
+            return bot.oneClickHelpFriend(gid, name);
+        });
+
         // === 数据统计 ===
         handle(socket, 'stats:get-daily', () => {
             return bot.getDailyStats();
@@ -198,6 +202,11 @@ function registerIPC(server) {
 
         handle(socket, 'notifications:clear', () => {
             return bot.clearAllNotifications();
+        });
+
+        // === 数据分析 ===
+        handle(socket, 'analytics:get-plant-rankings', ({ sortBy, maxLevel }) => {
+            return { success: true, rankings: bot.getPlantRankings(sortBy, maxLevel) };
         });
     });
 

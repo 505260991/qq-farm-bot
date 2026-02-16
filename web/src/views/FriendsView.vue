@@ -65,6 +65,9 @@
             <el-button size="small" type="primary" @click="viewFriendFarm(friend)">
               <el-icon><View /></el-icon> 查看农场
             </el-button>
+            <el-button size="small" type="success" @click="oneClickHelp(friend)" v-if="hasHelpAction(friend)" :loading="friend.helping">
+              <el-icon><FirstAidKit /></el-icon> 一键帮忙
+            </el-button>
           </div>
         </div>
       </div>
@@ -76,7 +79,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Refresh, Loading, User, Document, Warning, Drizzling, View } from '@element-plus/icons-vue'
+import { Refresh, Loading, User, Document, Warning, Drizzling, View, FirstAidKit } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const friends = ref([])
@@ -86,6 +89,13 @@ function hasAnyAction(friend) {
   if (!friend.plant) return false
   return friend.plant.stealNum > 0 || 
          friend.plant.dryNum > 0 || 
+         friend.plant.weedNum > 0 || 
+         friend.plant.insectNum > 0
+}
+
+function hasHelpAction(friend) {
+  if (!friend.plant) return false
+  return friend.plant.dryNum > 0 || 
          friend.plant.weedNum > 0 || 
          friend.plant.insectNum > 0
 }
@@ -112,6 +122,34 @@ function viewFriendFarm(friend) {
     params: { gid: friend.gid },
     query: { name: friend.name }
   })
+}
+
+async function oneClickHelp(friend) {
+  if (!window.electronAPI || friend.helping) return
+  
+  friend.helping = true
+  try {
+    const result = await window.electronAPI.invoke('friend-farm:one-click-help', {
+      gid: friend.gid,
+      name: friend.name
+    })
+    
+    if (result.success) {
+      if (result.actions && result.actions.length > 0) {
+        ElMessage.success(`帮助成功: ${result.actions.join(', ')}`)
+      } else {
+        ElMessage.info('没有可帮助的操作')
+      }
+      // 刷新列表以更新状态
+      await loadFriends()
+    } else {
+      ElMessage.error(result.error || '一键帮忙失败')
+    }
+  } catch (e) {
+    ElMessage.error('一键帮忙失败: ' + e.message)
+  } finally {
+    friend.helping = false
+  }
 }
 
 async function loadFriends() {

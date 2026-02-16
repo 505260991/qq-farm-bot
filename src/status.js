@@ -60,6 +60,7 @@ function initStatusBar() {
 
     // 监听终端大小变化
     process.stdout.on('resize', () => {
+        if (!statusEnabled) return;
         // resize 时可能导致状态栏错乱，这里做一个简单的清理和重绘尝试
         // 但最稳妥的方式可能是暂停输出日志，但这太复杂了。
         // 我们只更新 termRows 并重设区域。
@@ -75,6 +76,7 @@ function initStatusBar() {
     // 强制光标移动到滚动区域的底部
     // 这样新的输出会触发滚动，而不是覆盖前面的内容
     process.stdout.write(MOVE_TO(termRows, 1));
+    // console.log(''); // 输出一个空行，确保后续内容从新行开始
     return true;
 }
 

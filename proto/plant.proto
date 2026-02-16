@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package gamepb.plantpb;
+
+// ============ 土地信息 ============
+// 注意：LandInfo, LandUnlockCondition, LandUpgradeCondition 已经在 game.proto 中定义了
+// 这里我们不需要重新定义，直接引用即可。
+// 只要 protobufjs 同时加载了 game.proto 和 plant.proto，它们共享同一个命名空间 gamepb.plantpb
+// 因此这里直接使用 LandInfo 即可。
+
+// ============ 请求/回复消息 ============
+
+// --- 移除植物 ---
+// message RemovePlantRequest {
+//     repeated int64 land_ids = 1;
+// }
+
+// message RemovePlantReply {
+//     repeated LandInfo land = 1;
+// }
+
+// --- 施肥 ---
+// message FertilizeRequest {
+//     repeated int64 land_ids = 1;
+//     int64 fertilizer_id = 2;
+// }
+
+// message FertilizeReply {
+//     repeated LandInfo land = 1;
+//     int64 fertilizer = 3;
+// }
+
+// --- 升级土地 ---
+message UpgradeLandRequest {
+    int64 land_id = 1;
+}
+
+message UpgradeLandReply {
+    LandInfo land = 1;
+}
+
+// --- 解锁土地 ---
+message UnlockLandRequest {
+    int64 land_id = 1;
+    bool do_shared = 2;
+}
+
+message UnlockLandReply {
+    LandInfo land = 1;
+}

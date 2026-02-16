@@ -16,7 +16,7 @@ async function loadProto() {
     await root.load([
         path.join(protoDir, 'game.proto'),
         path.join(protoDir, 'userpb.proto'),
-        path.join(protoDir, 'plantpb.proto'),
+        path.join(protoDir, 'plant.proto'),
         path.join(protoDir, 'corepb.proto'),
         path.join(protoDir, 'shoppb.proto'),
         path.join(protoDir, 'friendpb.proto'),
@@ -59,6 +59,10 @@ async function loadProto() {
     types.PutWeedsReply = root.lookupType('gamepb.plantpb.PutWeedsReply');
     types.FertilizeRequest = root.lookupType('gamepb.plantpb.FertilizeRequest');
     types.FertilizeReply = root.lookupType('gamepb.plantpb.FertilizeReply');
+    types.UpgradeLandRequest = root.lookupType('gamepb.plantpb.UpgradeLandRequest');
+    types.UpgradeLandReply = root.lookupType('gamepb.plantpb.UpgradeLandReply');
+    types.UnlockLandRequest = root.lookupType('gamepb.plantpb.UnlockLandRequest');
+    types.UnlockLandReply = root.lookupType('gamepb.plantpb.UnlockLandReply');
 
     // 背包/仓库
     types.BagRequest = root.lookupType('gamepb.itempb.BagRequest');
