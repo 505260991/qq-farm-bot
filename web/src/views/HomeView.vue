@@ -369,10 +369,21 @@ onMounted(async () => {
   platform.value = config.platform || 'qq'
   plantMode.value = config.plantMode || 'fast'
   plantSeedId.value = config.plantSeedId || 0
+  
+  // 自动填充保存的 Code
+  if (config.savedCode) {
+    code.value = config.savedCode
+    platform.value = config.savedPlatform || 'qq'
+  }
+
   await refreshStatus();
   if (status.connected) {
     loadPlantPlan()
     loadLogs()
+  } else if (code.value) {
+    // 如果未连接但有保存的 Code，尝试自动连接
+    ElMessage.info('正在使用保存的凭证自动连接...')
+    handleConnect()
   }
 })
 

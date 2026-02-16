@@ -33,6 +33,8 @@ const DEFAULT_CONFIG = {
     autoUnlockLand: true,
     enableNotifications: false, // 是否启用通知系统
   },
+  savedCode: '', // 保存的登录 Code
+  savedPlatform: 'qq', // 保存的登录平台
   accounts: [],
   dailyStats: {
     date: null,

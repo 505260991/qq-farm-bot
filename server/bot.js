@@ -199,6 +199,12 @@ function botConnect(code, platform) {
           level: state.level,
           lastUsed: Date.now(),
         });
+        
+        // 保存最新的成功登录凭证
+        saveConfig({ 
+          savedCode: code, 
+          savedPlatform: CONFIG.platform 
+        });
       }
 
       try {
