@@ -51,15 +51,38 @@ function toTimeSec(val) {
     return n;
 }
 
+const { statusData } = require('./status');
+
 // ============ 日志 ============
 function log(tag, msg) {
-    console.log(`[${now()}] [${tag}] ${msg}`);
-    logEmitter.emit('log', { time: now(), category: tagToCategory(tag), level: 'info', message: `[${tag}] ${msg}` });
+    const timestamp = now();
+    const logMsg = `[${timestamp}] [${tag}] ${msg}`;
+    
+    // 如果启用了状态栏，日志输出需要先清除当前行，并确保不覆盖状态栏
+    // 但由于我们使用了滚动区域 (SCROLL_REGION)，直接 console.log 应该在区域内滚动
+    // 为了保险起见，我们可以显式地清除行尾
+    if (process.stdout.isTTY) {
+        process.stdout.write('\x1b[2K\r'); // 清除当前行并回车
+        console.log(logMsg);
+    } else {
+        console.log(logMsg);
+    }
+    
+    logEmitter.emit('log', { time: timestamp, category: tagToCategory(tag), level: 'info', message: `[${tag}] ${msg}` });
 }
 
 function logWarn(tag, msg) {
-    console.log(`[${now()}] [${tag}] ⚠ ${msg}`);
-    logEmitter.emit('log', { time: now(), category: tagToCategory(tag), level: 'warn', message: `[${tag}] ⚠ ${msg}` });
+    const timestamp = now();
+    const logMsg = `[${timestamp}] [${tag}] ⚠ ${msg}`;
+    
+    if (process.stdout.isTTY) {
+        process.stdout.write('\x1b[2K\r');
+        console.log(logMsg);
+    } else {
+        console.log(logMsg);
+    }
+    
+    logEmitter.emit('log', { time: timestamp, category: tagToCategory(tag), level: 'warn', message: `[${tag}] ⚠ ${msg}` });
 }
 
 function tagToCategory(tag) {

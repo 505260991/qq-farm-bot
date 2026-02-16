@@ -40,6 +40,7 @@ let lastLevel = 0;  // 记录上一次的等级，用于检测升级
 async function init() {
   // 启用终端状态栏
   setElectronMode(false);
+  initStatusBar();
   store.load();
 
   if (!protoLoaded) {
@@ -170,7 +171,7 @@ function botConnect(code, platform) {
 
     CONFIG.platform = platform || store.get().platform || 'qq';
     setStatusPlatform(CONFIG.platform);
-    initStatusBar();
+    // initStatusBar(); // 移除这里的初始化，避免重复调用导致布局错乱
 
     connect(code, async () => {
       isConnected = true;
