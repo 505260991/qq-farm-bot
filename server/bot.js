@@ -114,6 +114,7 @@ async function init() {
 
   // 应用保存的配置
   const config = store.get();
+  CONFIG.features = config.features || {}; // 同步 features 到全局 CONFIG
   CONFIG.farmCheckInterval = Math.max(config.farmInterval, 1) * 1000;
   CONFIG.friendCheckInterval = Math.max(config.friendInterval, 1) * 1000;
 
@@ -317,6 +318,7 @@ function getStatus() {
 // ============ 功能开关 ============
 function setFeatureEnabled(feature, enabled) {
   const features = store.setFeature(feature, enabled);
+  CONFIG.features = features; // 同步 features
 
   // 实时生效：根据开关状态启停模块
   if (isConnected) {
@@ -379,6 +381,7 @@ function saveConfig(partial) {
 
   // 实时应用功能开关
   if (partial.features !== undefined) {
+    CONFIG.features = config.features; // 同步 features
     setFriendFeatures(config.features);
     // setFarmFeatures(config.features); // 这里的 setFarmFeatures 似乎在源文件中没有导入？检查一下
   }
