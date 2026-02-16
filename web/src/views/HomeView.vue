@@ -23,24 +23,11 @@
     <!-- 登录区 -->
     <div class="section login-section" v-if="!status.connected">
       <div class="login-tabs">
+        <div class="login-tab" :class="{ active: loginMethod === 'qr' }" @click="loginMethod = 'qr'">QQ 扫码登录</div>
         <div class="login-tab" :class="{ active: loginMethod === 'code' }" @click="loginMethod = 'code'">Code 登录</div>
-        <div class="login-tab" :class="{ active: loginMethod === 'qr' }" @click="loginMethod = 'qr'">扫码登录</div>
       </div>
 
-      <div v-if="loginMethod === 'code'" class="login-content">
-        <div class="login-row">
-          <el-input v-model="code" placeholder="请输入 code" class="login-input"/>
-          <el-button type="primary" :loading="connecting" @click="handleConnect">连接</el-button>
-        </div>
-        <div class="platform-row">
-          <el-radio-group v-model="platform" size="small">
-            <el-radio value="qq">QQ</el-radio>
-            <el-radio value="wx">微信</el-radio>
-          </el-radio-group>
-        </div>
-      </div>
-
-      <div v-else class="login-content qr-content">
+      <div v-if="loginMethod === 'qr'" class="login-content qr-content">
         <div v-if="qrUrl" class="qr-container">
           <div class="qr-wrapper">
             <img :src="qrUrl" alt="QR Code" class="qr-img" />
@@ -55,6 +42,19 @@
           <el-button @click="getQrCode">获取二维码</el-button>
         </div>
         <div class="qr-tip">请使用手机 QQ 扫码登录</div>
+      </div>
+
+      <div v-else class="login-content">
+        <div class="login-row">
+          <el-input v-model="code" placeholder="请输入 code" class="login-input"/>
+          <el-button type="primary" :loading="connecting" @click="handleConnect">连接</el-button>
+        </div>
+        <div class="platform-row">
+          <el-radio-group v-model="platform" size="small">
+            <el-radio value="qq">QQ</el-radio>
+            <el-radio value="wx">微信</el-radio>
+          </el-radio-group>
+        </div>
       </div>
     </div>
     <div class="section connected-bar" v-else>
@@ -192,7 +192,7 @@ const platform = ref('qq')
 const plantPlan = ref(null)
 const plantMode = ref('fast')
 const plantSeedId = ref(0)
-const loginMethod = ref('code')
+const loginMethod = ref('qr')
 
 // QR Login State
 const qrUrl = ref('')
@@ -273,8 +273,11 @@ async function handleConnect() {
 
 async function handleDisconnect() {
   await disconnect()
-  plantPlan.value = null
-  stopQrCheck()
+  // 断开连接时，清除保存的 code，防止自动重连
+  await saveConfig({ savedCode: '', savedPlatform: 'qq' })
+  
+  // 刷新页面以重置所有状态
+  window.location.reload()
 }
 
 async function loadPlantPlan() {
