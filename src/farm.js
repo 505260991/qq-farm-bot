@@ -358,59 +358,14 @@ async function plantSeeds(seedId, landIds) {
 }
 
 async function findBestSeed() {
-    const SEED_SHOP_ID = 2;
-    const now = Date.now();
-
-    // 查询商店并缓存（5分钟TTL）
-    let available;
-    if (shopCache && (now - shopCache.timestamp) < SHOP_CACHE_TTL) {
-        available = shopCache.goodsList.map(g => ({ ...g }));
-    } else {
-        const shopReply = await getShopInfo(SEED_SHOP_ID);
-        if (!shopReply.goods_list || shopReply.goods_list.length === 0) {
-            logWarn('商店', '种子商店无商品');
-            return null;
-        }
-
-        const state = getUserState();
-        available = [];
-        for (const goods of shopReply.goods_list) {
-            if (!goods.unlocked) continue;
-
-            let meetsConditions = true;
-            let requiredLevel = 0;
-            const conds = goods.conds || [];
-            for (const cond of conds) {
-                if (toNum(cond.type) === 1) {
-                    requiredLevel = toNum(cond.param);
-                    if (state.level < requiredLevel) {
-                        meetsConditions = false;
-                        break;
-                    }
-                }
-            }
-            if (!meetsConditions) continue;
-
-            const limitCount = toNum(goods.limit_count);
-            const boughtNum = toNum(goods.bought_num);
-            if (limitCount > 0 && boughtNum >= limitCount) continue;
-
-            available.push({
-                goodsId: toNum(goods.id),
-                seedId: toNum(goods.item_id),
-                price: toNum(goods.price),
-                requiredLevel,
-            });
-        }
-
-        // 缓存商店数据（不含 protobuf 对象）
-        shopCache = { goodsList: available.map(g => ({ ...g })), timestamp: now };
-    }
-
-    if (available.length === 0) {
+    // 使用统一的商店缓存
+    const cache = await ensureShopCache();
+    if (!cache || cache.goodsList.length === 0) {
         logWarn('商店', '没有可购买的种子');
         return null;
     }
+
+    let available = cache.goodsList.map(g => ({ ...g }));
 
     // 如果外部指定了种子ID，优先使用
     if (overrideSeedId > 0) {

@@ -205,7 +205,7 @@ function handleNotify(msg) {
             return;
         }
 
-        // 物品变化通知 (经验/金币等) - 仅更新状态栏
+        // 物品变化通知 (经验/金币等)
         // 经验ID=1101, 金币ID=1
         if (type.includes('ItemNotify')) {
             try {
@@ -281,36 +281,6 @@ function handleNotify(msg) {
                     log('好友', `新好友: ${names}`);
                     networkEvents.emit('FriendAddedNotify', notify);
                 }
-            } catch (e) { }
-            return;
-        }
-
-        // 物品变化通知 (收获/购买/消耗等)
-        if (type.includes('ItemNotify')) {
-            try {
-                const notify = types.ItemNotify.decode(eventBody);
-                const items = notify.items || [];
-                for (const chg of items) {
-                    if (!chg.item) continue;
-                    const id = toNum(chg.item.id);
-                    const count = toNum(chg.item.count);
-                    const delta = toNum(chg.delta);
-                    // 金币 ID=1
-                    if (id === 1) {
-                        userState.gold = count;
-                        updateStatusGold(count);
-                        if (delta !== 0) {
-                            log('物品', `金币 ${delta > 0 ? '+' : ''}${delta} (当前: ${count})`);
-                        }
-                    }
-                    // 经验 ID=2 (升级由 BasicNotify 处理)
-                    // 经验 ID=1101 (另一种经验通知ID)
-                    else if (id === 1101) {
-                        userState.exp = count;
-                        updateStatusLevel(userState.level, count);
-                    }
-                }
-                networkEvents.emit('ItemNotify', notify);
             } catch (e) { }
             return;
         }

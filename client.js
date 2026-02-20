@@ -100,7 +100,7 @@ async function main() {
 
     // 正常挂机模式
     const code = parseArgs(args);
-    if (!code) 
+    if (!code) {
         showHelp();
         process.exit(1);
     }

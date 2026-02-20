@@ -52,6 +52,8 @@ const DEFAULT_CONFIG = {
 };
 
 let config = null;
+let saveTimer = null;
+const SAVE_DEBOUNCE_MS = 2000;  // 防抖：2秒内多次写入合并为一次
 
 function getConfigPath() {
   return path.join(process.cwd(), CONFIG_FILE);
@@ -82,6 +84,25 @@ function load() {
 }
 
 function save() {
+  // 使用防抖避免高频写入磁盘
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      const filePath = getConfigPath();
+      fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('[store] Failed to save config:', e.message);
+    }
+  }, SAVE_DEBOUNCE_MS);
+}
+
+/** 立即保存（进程退出前调用） */
+function saveImmediate() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
   try {
     const filePath = getConfigPath();
     fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
@@ -213,7 +234,7 @@ function updateDailyStats(updates) {
 }
 
 module.exports = { 
-  load, save, get, update, getFeature, setFeature, DEFAULT_CONFIG, 
+  load, save, saveImmediate, get, update, getFeature, setFeature, DEFAULT_CONFIG, 
   getAccounts, addAccount, removeAccount, updateAccount, 
   getDailyStats, updateDailyStats 
 };

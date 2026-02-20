@@ -51,8 +51,6 @@ function toTimeSec(val) {
     return n;
 }
 
-const { statusData } = require('./status');
-
 // ============ 日志 ============
 function log(tag, msg) {
     const timestamp = now();
