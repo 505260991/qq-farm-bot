@@ -246,7 +246,7 @@ async function runHelpTick(auto) {
     if (!auto.friend_help) {
         return;
     }
-    // 检查是否开启了经验上限停止帮忙，且经验已达上限
+    // 检查是否开启了经验满不帮忙，且经验已达上限
     const stopWhenExpLimit = !!auto.friend_help_exp_limit;
     if (stopWhenExpLimit && isHelpExpLimitReached()) {
         // 计算下次调度时间，但不执行巡查
@@ -611,12 +611,28 @@ async function handleApiCall(msg) {
             case 'doFriendOp':
                 result = await doFriendOperation(args[0], args[1]);
                 break;
+            case 'doBatchFriendOp':
+                result = await require('../services/friend').doBatchFriendOp(args[0]);
+                break;
             case 'getSeeds':
                 result = await getAvailableSeeds();
                 break;
             case 'getBag':
                 result = await require('../services/warehouse').getBagDetail();
                 break;
+            case 'useItem': {
+                const { useItem: _useItem } = require('../services/warehouse');
+                const itemId = Number(args[0]) || 0;
+                const count = Math.max(1, Number(args[1]) || 1);
+                result = await _useItem(itemId, count, []);
+                break;
+            }
+            case 'sellItems': {
+                const { sellItems: _sell } = require('../services/warehouse');
+                const sellList = Array.isArray(args[0]) ? args[0] : [];
+                result = await _sell(sellList.map(it => ({ id: it.id, count: it.count, uid: it.uid || 0 })));
+                break;
+            }
             case 'setAutomation': {
                 const payload = args && args[0] ? args[0] : {};
                 applyRuntimeConfig({ automation: { [payload.key]: payload.value } }, true);

@@ -67,20 +67,14 @@ const DEFAULT_ACCOUNT_CONFIG = {
         end: '07:00',
     },
     friendBlacklist: [],
-    // 偷菜过滤配置
-    stealFilter: {
-        enabled: false,      // 是否启用偷菜过滤
-        mode: 'blacklist',   // 模式: 'blacklist'(不偷列表中的) 或 'whitelist'(只偷列表中的)
-        plantIds: [],        // 植物ID列表
-    },
-    // 偷菜好友黑名单/白名单配置
-    stealFriendFilter: {
-        enabled: false,      // 是否启用好友过滤
-        mode: 'blacklist',   // 模式: 'blacklist'(不偷列表中的好友) 或 'whitelist'(只偷列表中的好友)
-        friendIds: [],       // 好友GID列表
-    },
-    // 蔬菜黑名单（偷菜过滤）- 分账号独立
+    // 蔬菜黑名单（偷菜时不偷的作物 seedId 列表）
     plantBlacklist: [],
+    // 好友作物成熟后延迟多少秒再偷取（0=不延迟）
+    stealDelaySeconds: 0,
+    // 自己农田种植时是否随机地块顺序
+    plantOrderRandom: false,
+    // 自己农田种植时每块地间隔秒数（0=使用默认50ms）
+    plantDelaySeconds: 0,
 };
 const ALLOWED_AUTOMATION_KEYS = new Set(Object.keys(DEFAULT_ACCOUNT_CONFIG.automation));
 
@@ -159,35 +153,7 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
 
     const rawBlacklist = Array.isArray(base.friendBlacklist) ? base.friendBlacklist : [];
 
-    // 偷菜过滤配置
-    const srcStealFilter = (base && base.stealFilter && typeof base.stealFilter === 'object')
-        ? base.stealFilter
-        : {};
-    const stealFilter = {
-        enabled: srcStealFilter.enabled !== undefined ? !!srcStealFilter.enabled : false,
-        mode: (srcStealFilter.mode === 'whitelist' || srcStealFilter.mode === 'blacklist')
-            ? srcStealFilter.mode
-            : 'blacklist',
-        plantIds: Array.isArray(srcStealFilter.plantIds)
-            ? srcStealFilter.plantIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-            : [],
-    };
-
-    // 偷菜好友黑名单/白名单配置
-    const srcStealFriendFilter = (base && base.stealFriendFilter && typeof base.stealFriendFilter === 'object')
-        ? base.stealFriendFilter
-        : {};
-    const stealFriendFilter = {
-        enabled: srcStealFriendFilter.enabled !== undefined ? !!srcStealFriendFilter.enabled : false,
-        mode: (srcStealFriendFilter.mode === 'whitelist' || srcStealFriendFilter.mode === 'blacklist')
-            ? srcStealFriendFilter.mode
-            : 'blacklist',
-        friendIds: Array.isArray(srcStealFriendFilter.friendIds)
-            ? srcStealFriendFilter.friendIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-            : [],
-    };
-
-    // 蔬菜黑名单（分账号独立）
+    // 蔬菜黑名单
     const rawPlantBlacklist = Array.isArray(base.plantBlacklist) ? base.plantBlacklist : [];
 
     return {
@@ -200,9 +166,10 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
             ? String(base.plantingStrategy)
             : DEFAULT_ACCOUNT_CONFIG.plantingStrategy,
         preferredSeedId: Math.max(0, Number.parseInt(base.preferredSeedId, 10) || 0),
-        stealFilter,
-        stealFriendFilter,
         plantBlacklist: rawPlantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
+        stealDelaySeconds: Math.max(0, Math.min(300, Number(base.stealDelaySeconds) || 0)),
+        plantOrderRandom: !!(base.plantOrderRandom),
+        plantDelaySeconds: Math.max(0, Math.min(60, Number(base.plantDelaySeconds) || 0)),
     };
 }
 
@@ -260,37 +227,24 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
         cfg.friendBlacklist = src.friendBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
 
-    // 偷菜过滤配置
-    if (src.stealFilter && typeof src.stealFilter === 'object') {
-        const old = cfg.stealFilter || {};
-        cfg.stealFilter = {
-            enabled: src.stealFilter.enabled !== undefined ? !!src.stealFilter.enabled : !!old.enabled,
-            mode: (src.stealFilter.mode === 'whitelist' || src.stealFilter.mode === 'blacklist')
-                ? src.stealFilter.mode
-                : (old.mode || 'blacklist'),
-            plantIds: Array.isArray(src.stealFilter.plantIds)
-                ? src.stealFilter.plantIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-                : (old.plantIds || []),
-        };
-    }
-
-    // 偷菜好友黑名单/白名单配置
-    if (src.stealFriendFilter && typeof src.stealFriendFilter === 'object') {
-        const old = cfg.stealFriendFilter || {};
-        cfg.stealFriendFilter = {
-            enabled: src.stealFriendFilter.enabled !== undefined ? !!src.stealFriendFilter.enabled : !!old.enabled,
-            mode: (src.stealFriendFilter.mode === 'whitelist' || src.stealFriendFilter.mode === 'blacklist')
-                ? src.stealFriendFilter.mode
-                : (old.mode || 'blacklist'),
-            friendIds: Array.isArray(src.stealFriendFilter.friendIds)
-                ? src.stealFriendFilter.friendIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-                : (old.friendIds || []),
-        };
-    }
-
-    // 蔬菜黑名单（分账号独立）
+    // 蔬菜黑名单
     if (Array.isArray(src.plantBlacklist)) {
         cfg.plantBlacklist = src.plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 偷取延迟
+    if (src.stealDelaySeconds !== undefined && src.stealDelaySeconds !== null) {
+        cfg.stealDelaySeconds = Math.max(0, Math.min(300, Number.parseInt(src.stealDelaySeconds, 10) || 0));
+    }
+
+    // 种植顺序随机
+    if (src.plantOrderRandom !== undefined && src.plantOrderRandom !== null) {
+        cfg.plantOrderRandom = !!src.plantOrderRandom;
+    }
+
+    // 种植延迟
+    if (src.plantDelaySeconds !== undefined && src.plantDelaySeconds !== null) {
+        cfg.plantDelaySeconds = Math.max(0, Math.min(60, Number(src.plantDelaySeconds) || 0));
     }
 
     return cfg;
@@ -472,9 +426,10 @@ function getConfigSnapshot(accountId) {
         intervals: { ...cfg.intervals },
         friendQuietHours: { ...cfg.friendQuietHours },
         friendBlacklist: [...(cfg.friendBlacklist || [])],
-        stealFilter: { ...(cfg.stealFilter || { enabled: false, mode: 'blacklist', plantIds: [] }) },
-        stealFriendFilter: { ...(cfg.stealFriendFilter || { enabled: false, mode: 'blacklist', friendIds: [] }) },
         plantBlacklist: [...(cfg.plantBlacklist || [])],
+        stealDelaySeconds: Math.max(0, Math.min(300, Number(cfg.stealDelaySeconds) || 0)),
+        plantOrderRandom: !!cfg.plantOrderRandom,
+        plantDelaySeconds: Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 0)),
         ui: { ...globalConfig.ui },
     };
 }
@@ -528,37 +483,24 @@ function applyConfigSnapshot(snapshot, options = {}) {
         next.friendBlacklist = cfg.friendBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
 
-    // 偷菜过滤配置
-    if (cfg.stealFilter && typeof cfg.stealFilter === 'object') {
-        const old = next.stealFilter || {};
-        next.stealFilter = {
-            enabled: cfg.stealFilter.enabled !== undefined ? !!cfg.stealFilter.enabled : !!old.enabled,
-            mode: (cfg.stealFilter.mode === 'whitelist' || cfg.stealFilter.mode === 'blacklist')
-                ? cfg.stealFilter.mode
-                : (old.mode || 'blacklist'),
-            plantIds: Array.isArray(cfg.stealFilter.plantIds)
-                ? cfg.stealFilter.plantIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-                : (old.plantIds || []),
-        };
-    }
-
-    // 偷菜好友过滤配置
-    if (cfg.stealFriendFilter && typeof cfg.stealFriendFilter === 'object') {
-        const old = next.stealFriendFilter || {};
-        next.stealFriendFilter = {
-            enabled: cfg.stealFriendFilter.enabled !== undefined ? !!cfg.stealFriendFilter.enabled : !!old.enabled,
-            mode: (cfg.stealFriendFilter.mode === 'whitelist' || cfg.stealFriendFilter.mode === 'blacklist')
-                ? cfg.stealFriendFilter.mode
-                : (old.mode || 'blacklist'),
-            friendIds: Array.isArray(cfg.stealFriendFilter.friendIds)
-                ? cfg.stealFriendFilter.friendIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-                : (old.friendIds || []),
-        };
-    }
-
-    // 蔬菜黑名单（分账号独立）
+    // 蔬菜黑名单
     if (Array.isArray(cfg.plantBlacklist)) {
         next.plantBlacklist = cfg.plantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 偷取延迟
+    if (cfg.stealDelaySeconds !== undefined && cfg.stealDelaySeconds !== null) {
+        next.stealDelaySeconds = Math.max(0, Math.min(300, Number(cfg.stealDelaySeconds) || 0));
+    }
+
+    // 种植顺序随机
+    if (cfg.plantOrderRandom !== undefined && cfg.plantOrderRandom !== null) {
+        next.plantOrderRandom = !!cfg.plantOrderRandom;
+    }
+
+    // 种植延迟
+    if (cfg.plantDelaySeconds !== undefined && cfg.plantDelaySeconds !== null) {
+        next.plantDelaySeconds = Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 0));
     }
 
     if (cfg.ui && typeof cfg.ui === 'object') {
@@ -648,7 +590,22 @@ function setFriendBlacklist(accountId, list) {
     return [...next.friendBlacklist];
 }
 
-// ============ 蔬菜黑名单（偷菜过滤）- 分账号独立 ============
+// ============ 偷取延迟 ============
+function getStealDelaySeconds(accountId) {
+    return Math.max(0, Math.min(300, Number(getAccountConfigSnapshot(accountId).stealDelaySeconds) || 0));
+}
+
+// ============ 种植顺序随机 ============
+function getPlantOrderRandom(accountId) {
+    return !!getAccountConfigSnapshot(accountId).plantOrderRandom;
+}
+
+// ============ 种植延迟 ============
+function getPlantDelaySeconds(accountId) {
+    return Math.max(0, Math.min(60, Number(getAccountConfigSnapshot(accountId).plantDelaySeconds) || 0));
+}
+
+// ============ 蔬菜黑名单 ============
 function getPlantBlacklist(accountId) {
     return [...(getAccountConfigSnapshot(accountId).plantBlacklist || [])];
 }
@@ -659,48 +616,6 @@ function setPlantBlacklist(accountId, list) {
     next.plantBlacklist = Array.isArray(list) ? list.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
     setAccountConfigSnapshot(accountId, next);
     return [...next.plantBlacklist];
-}
-
-// ============ 偷菜过滤配置 ============
-function getStealFilterConfig(accountId) {
-    const cfg = getAccountConfigSnapshot(accountId);
-    return cfg.stealFilter || { enabled: false, mode: 'blacklist', plantIds: [] };
-}
-
-function setStealFilterConfig(config, accountId) {
-    const current = getAccountConfigSnapshot(accountId);
-    const next = cloneAccountConfig(current);
-    next.stealFilter = {
-        enabled: config.enabled !== undefined ? !!config.enabled : (next.stealFilter?.enabled || false),
-        mode: (config.mode === 'whitelist' || config.mode === 'blacklist')
-            ? config.mode
-            : (next.stealFilter?.mode || 'blacklist'),
-        plantIds: Array.isArray(config.plantIds)
-            ? config.plantIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-            : (next.stealFilter?.plantIds || []),
-    };
-    return setAccountConfigSnapshot(accountId, next, true);
-}
-
-// ============ 偷菜好友黑名单/白名单配置 ============
-function getStealFriendFilterConfig(accountId) {
-    const cfg = getAccountConfigSnapshot(accountId);
-    return cfg.stealFriendFilter || { enabled: false, mode: 'blacklist', friendIds: [] };
-}
-
-function setStealFriendFilterConfig(config, accountId) {
-    const current = getAccountConfigSnapshot(accountId);
-    const next = cloneAccountConfig(current);
-    next.stealFriendFilter = {
-        enabled: config.enabled !== undefined ? !!config.enabled : (next.stealFriendFilter?.enabled || false),
-        mode: (config.mode === 'whitelist' || config.mode === 'blacklist')
-            ? config.mode
-            : (next.stealFriendFilter?.mode || 'blacklist'),
-        friendIds: Array.isArray(config.friendIds)
-            ? config.friendIds.map(id => Number.parseInt(id, 10) || 0).filter(id => id > 0)
-            : (next.stealFriendFilter?.friendIds || []),
-    };
-    return setAccountConfigSnapshot(accountId, next, true);
 }
 
 function getUI() {
@@ -868,6 +783,9 @@ module.exports = {
     getFriendQuietHours,
     getFriendBlacklist,
     setFriendBlacklist,
+    getStealDelaySeconds,
+    getPlantOrderRandom,
+    getPlantDelaySeconds,
     getUI,
     setUITheme,
     getOfflineReminder,
@@ -878,16 +796,11 @@ module.exports = {
     deleteAccount,
     getAdminPasswordHash,
     setAdminPasswordHash,
-    // 偷菜过滤配置
-    getStealFilterConfig,
-    setStealFilterConfig,
-    getStealFriendFilterConfig,
-    setStealFriendFilterConfig,
     // 用户隔离支持
     getAccountsByUser,
     deleteAccountsByUser,
     deleteUserConfig,
-    // 蔬菜黑名单（偷菜过滤）
+    // 蔬菜黑名单
     getPlantBlacklist,
     setPlantBlacklist,
 };

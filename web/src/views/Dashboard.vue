@@ -2,16 +2,19 @@
 import { useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import api from '@/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useAccountStore } from '@/stores/account'
 import { useBagStore } from '@/stores/bag'
 import { useStatusStore } from '@/stores/status'
+import { useToastStore } from '@/stores/toast'
 
 const statusStore = useStatusStore()
 const accountStore = useAccountStore()
 const bagStore = useBagStore()
+const toastStore = useToastStore()
 const {
   status,
   logs: statusLogs,
@@ -23,6 +26,7 @@ const { dashboardItems } = storeToRefs(bagStore)
 const logContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
 const lastBagFetchAt = ref(0)
+const clearingLogs = ref(false)
 
 const allLogs = computed(() => {
   const sLogs = statusLogs.value || []
@@ -381,6 +385,25 @@ function onLogScroll(e: Event) {
   autoScroll.value = isNearBottom
 }
 
+async function clearLogs() {
+  if (!currentAccountId.value) return
+  clearingLogs.value = true
+  try {
+    const { data } = await api.delete('/api/logs')
+    if (data?.ok) {
+      toastStore.success('日志已清空')
+      await refresh(true)
+    } else {
+      toastStore.error(`清空失败: ${data?.error || '未知错误'}`)
+    }
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || e?.message || '请求失败'
+    toastStore.error(`清空失败: ${msg}`)
+  } finally {
+    clearingLogs.value = false
+  }
+}
+
 // Auto scroll logs
 watch(allLogs, () => {
   nextTick(() => {
@@ -402,7 +425,7 @@ useIntervalFn(updateCountdowns, 1000)
 </script>
 
 <template>
-  <div class="flex flex-col gap-6 pt-6 md:h-full">
+  <div class="flex flex-col gap-6 pt-6">
     <!-- Status Cards -->
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-3 sm:grid-cols-2">
       <!-- Account & Exp -->
@@ -547,9 +570,9 @@ useIntervalFn(updateCountdowns, 1000)
     </div>
 
     <!-- Main Content Flex -->
-    <div class="flex flex-1 flex-col items-stretch gap-6 md:flex-row md:overflow-hidden">
+    <div class="flex flex-1 flex-col items-stretch gap-6 md:flex-row">
       <!-- Logs (Left Column) -->
-      <div class="flex flex-1 flex-col gap-6 md:w-3/4 md:overflow-hidden">
+      <div class="flex flex-1 flex-col gap-6 md:w-3/4">
         <!-- Logs -->
         <div class="flex flex-1 flex-col rounded-lg bg-white p-6 shadow md:overflow-hidden dark:bg-gray-800">
           <div class="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -596,10 +619,19 @@ useIntervalFn(updateCountdowns, 1000)
               >
                 <div class="i-carbon-search" />
               </BaseButton>
+
+              <BaseButton
+                variant="secondary"
+                size="sm"
+                :loading="clearingLogs"
+                @click="clearLogs"
+              >
+                <div class="i-carbon-trash-can" />
+              </BaseButton>
             </div>
           </div>
 
-          <div ref="logContainer" class="max-h-[50vh] min-h-0 flex-1 overflow-y-auto rounded bg-gray-50 p-4 text-sm leading-relaxed font-mono md:max-h-none dark:bg-gray-900" @scroll="onLogScroll">
+          <div ref="logContainer" class="max-h-[50vh] min-h-0 flex-1 overflow-y-auto rounded bg-gray-50 p-4 text-sm leading-relaxed font-mono dark:bg-gray-900" @scroll="onLogScroll">
             <div v-if="!allLogs.length" class="py-8 text-center text-gray-400">
               暂无日志
             </div>

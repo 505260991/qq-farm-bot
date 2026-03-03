@@ -69,12 +69,37 @@ function createDataProvider(options) {
         getAccountLogs: (limit) => accountLogs.slice(-limit).reverse(),
         addAccountLog: (action, msg, accountId, accountName, extra) => addAccountLog(action, msg, accountId, accountName, extra),
 
+        clearLogs: (accountRef) => {
+            const rawRef = normalizeAccountRef(accountRef);
+            const accountId = resolveAccountRefId(accountRef);
+            
+            if (!rawRef || rawRef === 'all') {
+                globalLogs.length = 0;
+                return { cleared: 'all' };
+            }
+            
+            if (!accountId) return { cleared: 0 };
+            
+            const accId = String(accountId || '');
+            const before = globalLogs.length;
+            for (let i = globalLogs.length - 1; i >= 0; i--) {
+                if (String(globalLogs[i].accountId || '') === accId) {
+                    globalLogs.splice(i, 1);
+                }
+            }
+            const after = globalLogs.length;
+            return { cleared: before - after, accountId };
+        },
+
         // 透传方法
         getLands: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getLands'),
         getFriends: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getFriends'),
         getFriendLands: (accountRef, gid) => callWorkerApi(resolveAccountRefId(accountRef), 'getFriendLands', gid),
         doFriendOp: (accountRef, gid, opType) => callWorkerApi(resolveAccountRefId(accountRef), 'doFriendOp', gid, opType),
+        doBatchFriendOp: (accountRef, opType) => callWorkerApi(resolveAccountRefId(accountRef), 'doBatchFriendOp', opType),
         getBag: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getBag'),
+        useItem: (accountRef, itemId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'useItem', itemId, count),
+        sellItems: (accountRef, items) => callWorkerApi(resolveAccountRefId(accountRef), 'sellItems', items),
         getDailyGifts: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDailyGiftOverview'),
         getSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getSeeds'),
 

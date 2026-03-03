@@ -23,6 +23,10 @@ export interface IntervalsConfig {
   farmMax?: number
   friendMin?: number
   friendMax?: number
+  helpMin?: number
+  helpMax?: number
+  stealMin?: number
+  stealMax?: number
 }
 
 export interface FriendQuietHoursConfig {
@@ -53,6 +57,9 @@ export interface SettingsState {
   automation: AutomationConfig
   ui: UIConfig
   offlineReminder: OfflineConfig
+  stealDelaySeconds: number
+  plantOrderRandom: boolean
+  plantDelaySeconds: number
 }
 
 export const useSettingStore = defineStore('setting', () => {
@@ -72,6 +79,9 @@ export const useSettingStore = defineStore('setting', () => {
       msg: '账号下线',
       offlineDeleteSec: 120,
     },
+    stealDelaySeconds: 0,
+    plantOrderRandom: false,
+    plantDelaySeconds: 0,
   })
   const loading = ref(false)
 
@@ -100,6 +110,9 @@ export const useSettingStore = defineStore('setting', () => {
           msg: '账号下线',
           offlineDeleteSec: 120,
         }
+        settings.value.stealDelaySeconds = d.stealDelaySeconds ?? 0
+        settings.value.plantOrderRandom = d.plantOrderRandom ?? false
+        settings.value.plantDelaySeconds = d.plantDelaySeconds ?? 0
       }
     }
     finally {
@@ -112,26 +125,26 @@ export const useSettingStore = defineStore('setting', () => {
       return { ok: false, error: '未选择账号' }
     loading.value = true
     try {
-      // 1. Save general settings
       const settingsPayload = {
         plantingStrategy: newSettings.plantingStrategy,
         preferredSeedId: newSettings.preferredSeedId,
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
+        stealDelaySeconds: newSettings.stealDelaySeconds ?? 0,
+        plantOrderRandom: newSettings.plantOrderRandom ?? false,
+        plantDelaySeconds: newSettings.plantDelaySeconds ?? 0,
       }
 
       await api.post('/api/settings/save', settingsPayload, {
         headers: { 'x-account-id': accountId },
       })
 
-      // 2. Save automation settings
       if (newSettings.automation) {
         await api.post('/api/automation', newSettings.automation, {
           headers: { 'x-account-id': accountId },
         })
       }
 
-      // Refresh settings
       await fetchSettings(accountId)
       return { ok: true }
     }
@@ -154,8 +167,6 @@ export const useSettingStore = defineStore('setting', () => {
       loading.value = false
     }
   }
-
-  // 管理员密码修改已移除，统一使用 userStore.changePassword 方法
 
   return { settings, loading, fetchSettings, saveSettings, saveOfflineConfig }
 })

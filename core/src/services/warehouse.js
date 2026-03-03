@@ -311,6 +311,18 @@ async function getCurrentTotalsFromBag() {
 async function getBagDetail() {
     const bagReply = await getBag();
     const rawItems = getBagItems(bagReply);
+    
+    // 保留原始物品列表（用于出售等操作）
+    const originalItems = [];
+    for (const it of (rawItems || [])) {
+        const id = toNum(it.id);
+        const count = toNum(it.count);
+        const uid = toNum(it.uid);
+        if (id <= 0 || count <= 0) continue;
+        originalItems.push({ id, count, uid });
+    }
+    
+    // 合并展示
     const merged = new Map();
     for (const it of (rawItems || [])) {
         const id = toNum(it.id);
@@ -340,7 +352,6 @@ async function getBagDetail() {
             merged.set(id, {
                 id,
                 count: 0,
-                uid: 0, // 合并展示后 UID 不再有意义
                 name,
                 image: getItemImageById(id),
                 category,
@@ -371,7 +382,7 @@ async function getBagDetail() {
         if (cb !== ca) return cb - ca;
         return Number(a.id || 0) - Number(b.id || 0);
     });
-    return { totalKinds: items.length, items };
+    return { totalKinds: items.length, items, originalItems };
 }
 
 // ============ 出售逻辑 ============

@@ -135,6 +135,20 @@ export const useFriendStore = defineStore('friend', () => {
     }
   }
 
+  async function batchOperate(accountId: string, opType: string) {
+    if (!accountId)
+      return { ok: false, error: 'Missing accountId' }
+    try {
+      const res = await api.post('/api/friends/batch-op', { opType }, {
+        headers: { 'x-account-id': accountId },
+      })
+      return res.data
+    }
+    catch (e: any) {
+      return { ok: false, error: e?.message || '请求失败' }
+    }
+  }
+
   return {
     friends,
     loading,
@@ -146,5 +160,6 @@ export const useFriendStore = defineStore('friend', () => {
     toggleBlacklist,
     fetchFriendLands,
     operate,
+    batchOperate,
   }
 })

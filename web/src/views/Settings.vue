@@ -24,6 +24,7 @@ const { seeds } = storeToRefs(farmStore)
 const saving = ref(false)
 const passwordSaving = ref(false)
 const offlineSaving = ref(false)
+const offlineTesting = ref(false)
 
 const modalVisible = ref(false)
 const modalConfig = ref({
@@ -51,6 +52,9 @@ const currentAccountName = computed(() => {
 const localSettings = ref({
   plantingStrategy: 'preferred',
   preferredSeedId: 0,
+  stealDelaySeconds: 0,
+  plantOrderRandom: false,
+  plantDelaySeconds: 0,
   intervals: { farmMin: 2, farmMax: 2, helpMin: 10, helpMax: 10, stealMin: 10, stealMax: 10 },
   friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
   automation: {
@@ -64,17 +68,10 @@ const localSettings = ref({
     friend_help: false,
     friend_bad: false,
     friend_help_exp_limit: false,
-    // 以下功能默认启用，不再提供开关
-    // email: true,
-    // free_gifts: true,
-    // share_reward: true,
-    // vip_gift: true,
-    // month_card: true,
-    // open_server_gift: true,
     fertilizer_gift: false,
     fertilizer_buy: false,
     fertilizer: 'none',
-    skip_own_weed_bug: false, // 不除自己农场草虫
+    skip_own_weed_bug: false,
   },
 })
 
@@ -99,12 +96,14 @@ function syncLocalSettings() {
     localSettings.value = JSON.parse(JSON.stringify({
       plantingStrategy: settings.value.plantingStrategy,
       preferredSeedId: settings.value.preferredSeedId,
+      stealDelaySeconds: settings.value.stealDelaySeconds ?? 0,
+      plantOrderRandom: !!settings.value.plantOrderRandom,
+      plantDelaySeconds: settings.value.plantDelaySeconds ?? 0,
       intervals: settings.value.intervals,
       friendQuietHours: settings.value.friendQuietHours,
       automation: settings.value.automation,
     }))
 
-    // Default automation values if missing
     if (!localSettings.value.automation) {
       localSettings.value.automation = {
         farm: false,
@@ -117,13 +116,6 @@ function syncLocalSettings() {
         friend_help: false,
         friend_bad: false,
         friend_help_exp_limit: false,
-        // 以下功能默认启用，不再提供开关
-        // email: true,
-        // free_gifts: true,
-        // share_reward: true,
-        // vip_gift: true,
-        // month_card: true,
-        // open_server_gift: true,
         fertilizer_gift: false,
         fertilizer_buy: false,
         fertilizer: 'none',
@@ -131,7 +123,6 @@ function syncLocalSettings() {
       }
     }
     else {
-      // Merge with defaults to ensure all keys exist
       const defaults = {
         farm: false,
         task: false,
@@ -143,13 +134,6 @@ function syncLocalSettings() {
         friend_help: false,
         friend_bad: false,
         friend_help_exp_limit: false,
-        // 以下功能默认启用，不再提供开关
-        // email: true,
-        // free_gifts: true,
-        // share_reward: true,
-        // vip_gift: true,
-        // month_card: true,
-        // open_server_gift: true,
         fertilizer_gift: false,
         fertilizer_buy: false,
         fertilizer: 'none',
@@ -161,7 +145,6 @@ function syncLocalSettings() {
       }
     }
 
-    // Sync offline settings (global)
     if (settings.value.offlineReminder) {
       localOffline.value = JSON.parse(JSON.stringify(settings.value.offlineReminder))
     }
@@ -172,7 +155,6 @@ async function loadData() {
   if (currentAccountId.value) {
     await settingStore.fetchSettings(currentAccountId.value)
     syncLocalSettings()
-    // Always fetch seeds to ensure correct locked status for current account
     await farmStore.fetchSeeds(currentAccountId.value)
   }
 }
@@ -390,6 +372,26 @@ async function handleSaveOffline() {
     offlineSaving.value = false
   }
 }
+
+async function handleTestOffline() {
+  offlineTesting.value = true
+  try {
+    const { data } = await api.post('/api/settings/offline-reminder/test', localOffline.value)
+    if (data?.ok) {
+      showAlert('测试消息发送成功')
+    }
+    else {
+      showAlert(`测试失败: ${data?.error || '未知错误'}`, 'danger')
+    }
+  }
+  catch (e: any) {
+    const msg = e?.response?.data?.error || e?.message || '请求失败'
+    showAlert(`测试失败: ${msg}`, 'danger')
+  }
+  finally {
+    offlineTesting.value = false
+  }
+}
 </script>
 
 <template>
@@ -400,9 +402,7 @@ async function handleSaveOffline() {
     </div>
 
     <div v-else class="grid grid-cols-1 mt-12 gap-4 text-sm lg:grid-cols-2">
-      <!-- Card 1: Strategy & Automation -->
       <div v-if="currentAccountId" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
-        <!-- Strategy Header -->
         <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
           <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
             <div class="i-fas-cogs" />
@@ -413,7 +413,6 @@ async function handleSaveOffline() {
           </h3>
         </div>
 
-        <!-- Strategy Content -->
         <div class="p-4 space-y-3">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <BaseSelect
@@ -427,7 +426,6 @@ async function handleSaveOffline() {
               label="优先种植种子"
               :options="preferredSeedOptions"
             />
-            <!-- 预览区域：与 BaseSelect 同结构同样式，避免切换策略时布局跳动 -->
             <div v-else class="flex flex-col gap-1.5">
               <label class="text-sm text-gray-700 font-medium dark:text-gray-300">策略选种预览</label>
               <div
@@ -454,7 +452,6 @@ async function handleSaveOffline() {
             />
           </div>
 
-          <!-- 帮助巡查间隔 -->
           <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
             <BaseInput
               v-model.number="localSettings.intervals.helpMin"
@@ -470,7 +467,6 @@ async function handleSaveOffline() {
             />
           </div>
 
-          <!-- 偷菜巡查间隔 -->
           <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
             <BaseInput
               v-model.number="localSettings.intervals.stealMin"
@@ -507,9 +503,30 @@ async function handleSaveOffline() {
               />
             </div>
           </div>
+
+          <div class="mt-4 space-y-3 border-t pt-3 dark:border-gray-700">
+            <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">种植与偷菜延迟设置</h4>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <BaseSwitch
+                v-model="localSettings.plantOrderRandom"
+                label="种植顺序随机"
+              />
+              <BaseInput
+                v-model.number="localSettings.plantDelaySeconds"
+                label="种植延迟 (秒)"
+                type="number"
+                min="0"
+              />
+              <BaseInput
+                v-model.number="localSettings.stealDelaySeconds"
+                label="偷菜延迟 (秒)"
+                type="number"
+                min="0"
+              />
+            </div>
+          </div>
         </div>
 
-        <!-- Auto Control Header -->
         <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
           <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
             <div class="i-fas-toggle-on" />
@@ -517,9 +534,7 @@ async function handleSaveOffline() {
           </h3>
         </div>
 
-        <!-- Auto Control Content -->
         <div class="flex-1 p-4 space-y-4">
-          <!-- Switches Grid -->
           <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
             <BaseSwitch v-model="localSettings.automation.farm" label="自动种植收获" />
             <BaseSwitch v-model="localSettings.automation.task" label="自动做任务" />
@@ -527,28 +542,18 @@ async function handleSaveOffline() {
             <BaseSwitch v-model="localSettings.automation.friend" label="自动好友互动" />
             <BaseSwitch v-model="localSettings.automation.farm_push" label="推送触发巡田" />
             <BaseSwitch v-model="localSettings.automation.land_upgrade" label="自动升级土地" />
-            <!-- 以下功能默认启用，不再提供开关
-            <BaseSwitch v-model="localSettings.automation.email" label="自动领取邮件" />
-            <BaseSwitch v-model="localSettings.automation.free_gifts" label="自动商城礼包" />
-            <BaseSwitch v-model="localSettings.automation.share_reward" label="自动分享奖励" />
-            <BaseSwitch v-model="localSettings.automation.vip_gift" label="自动VIP礼包" />
-            <BaseSwitch v-model="localSettings.automation.month_card" label="自动月卡奖励" />
-            <BaseSwitch v-model="localSettings.automation.open_server_gift" label="自动开服红包" />
-            -->
             <BaseSwitch v-model="localSettings.automation.fertilizer_gift" label="自动填充化肥" />
             <BaseSwitch v-model="localSettings.automation.fertilizer_buy" label="自动购买化肥" />
-            <BaseSwitch v-model="localSettings.automation.skip_own_weed_bug" label="不除自己农场草虫" />
+            <BaseSwitch v-model="localSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
           </div>
 
-          <!-- Sub-controls -->
           <div v-if="localSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-2 text-sm dark:bg-blue-900/20">
             <BaseSwitch v-model="localSettings.automation.friend_steal" label="自动偷菜" />
             <BaseSwitch v-model="localSettings.automation.friend_help" label="自动帮忙" />
             <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" />
-            <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验上限停止帮忙" />
+            <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验满不帮忙" />
           </div>
 
-          <!-- Fertilizer -->
           <div>
             <BaseSelect
               v-model="localSettings.automation.fertilizer"
@@ -559,7 +564,6 @@ async function handleSaveOffline() {
           </div>
         </div>
 
-        <!-- Save Button -->
         <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
           <BaseButton
             variant="primary"
@@ -586,9 +590,7 @@ async function handleSaveOffline() {
         </div>
       </div>
 
-      <!-- Card 2: System Settings (Password & Offline) -->
       <div class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
-        <!-- Password Header -->
         <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
           <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
             <div class="i-carbon-password" />
@@ -596,7 +598,6 @@ async function handleSaveOffline() {
           </h3>
         </div>
 
-        <!-- Password Content -->
         <div class="p-4 space-y-3">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <BaseInput
@@ -631,7 +632,6 @@ async function handleSaveOffline() {
           </div>
         </div>
 
-        <!-- Offline Header -->
         <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
           <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
             <div class="i-carbon-notification" />
@@ -639,7 +639,6 @@ async function handleSaveOffline() {
           </h3>
         </div>
 
-        <!-- Offline Content -->
         <div class="flex-1 p-4 space-y-3">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div class="flex flex-col gap-1.5">
@@ -704,12 +703,21 @@ async function handleSaveOffline() {
           />
         </div>
 
-        <!-- Save Offline Button -->
-        <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+        <div class="mt-auto flex justify-end gap-2 border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            :loading="offlineTesting"
+            :disabled="offlineSaving"
+            @click="handleTestOffline"
+          >
+            测试通知
+          </BaseButton>
           <BaseButton
             variant="primary"
             size="sm"
             :loading="offlineSaving"
+            :disabled="offlineTesting"
             @click="handleSaveOffline"
           >
             保存下线提醒设置
@@ -732,5 +740,4 @@ async function handleSaveOffline() {
 </template>
 
 <style scoped lang="postcss">
-/* Custom styles if needed */
 </style>

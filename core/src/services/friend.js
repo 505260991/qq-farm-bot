@@ -4,7 +4,7 @@
 
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('../config/config');
 const { getPlantName, getPlantById, getSeedImageBySeedId } = require('../config/gameConfig');
-const { isAutomationOn, getFriendQuietHours, getFriendBlacklist, setFriendBlacklist, getStealFilterConfig, getStealFriendFilterConfig, getPlantBlacklist } = require('../models/store');
+const { isAutomationOn, getFriendQuietHours, getFriendBlacklist, setFriendBlacklist, getPlantBlacklist } = require('../models/store');
 const { sendMsgAsync, getUserState, networkEvents } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toLong, toNum, toTimeSec, getServerTimeSec, log, logWarn, sleep } = require('../utils/utils');
@@ -375,7 +375,7 @@ async function checkCanOperateRemote(friendGid, operationId) {
 // ============ 好友土地分析 ============
 
 function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
-    const { stealFilter = null, plantBlacklist = null } = options;
+    const { plantBlacklist = null } = options;
     const result = {
         stealable: [],   // 可偷
         stealableInfo: [],  // 可偷植物信息 { landId, plantId, name }
@@ -409,33 +409,12 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
                 const plantCfg = getPlantById(plantId);
                 const seedId = plantCfg ? toNum(plantCfg.seed_id) : 0;
 
-                // 蔬菜黑名单过滤（全局设置，仅影响偷菜）- 使用seedId检查
+                // 蔬菜黑名单过滤 - 使用seedId检查
                 if (plantBlacklist && seedId > 0 && plantBlacklist.includes(seedId)) {
-                    log('好友', `${friendName} 土地#${id}: ${plantName}(${plantId},种子${seedId}) 被全局蔬菜黑名单过滤跳过`, {
-                        module: 'friend', event: '全局蔬菜黑名单跳过', friendName, landId: id, plantId, seedId, plantName
+                    log('好友', `${friendName} 土地#${id}: ${plantName}(${plantId},种子${seedId}) 被蔬菜黑名单过滤跳过`, {
+                        module: 'friend', event: '蔬菜黑名单跳过', friendName, landId: id, plantId, seedId, plantName
                     });
                     continue;
-                }
-
-                // 偷菜过滤逻辑（账号级别配置）- 使用seedId检查，只要有黑名单就启用
-                if (stealFilter && seedId > 0) {
-                    const mode = stealFilter.mode || 'blacklist';
-                    const plantIds = stealFilter.plantIds || [];
-                    // 只要有黑名单数据就启用过滤
-                    if (plantIds.length > 0) {
-                        const inList = plantIds.includes(seedId);
-                        // 黑名单模式：在列表中则跳过；白名单模式：不在列表中则跳过
-                        if (mode === 'blacklist' && inList) {
-                            log('好友', `${friendName} 土地#${id}: ${plantName}(${plantId},种子${seedId}) 被蔬菜黑名单过滤跳过`, {
-                                module: 'friend', event: '蔬菜黑名单跳过', friendName, landId: id, plantId, seedId, plantName, mode: 'blacklist'
-                            });
-                            continue;
-                        }
-                        if (mode === 'whitelist' && !inList) {
-                            // 白名单模式只记录在白名单中的蔬菜
-                            continue;
-                        }
-                    }
                 }
                 result.stealable.push(id);
                 result.stealableInfo.push({ landId: id, plantId, name: plantName });
@@ -512,9 +491,8 @@ async function getFriendLandsDetail(friendGid) {
         const enterReply = await enterFriendFarm(friendGid);
         const lands = enterReply.lands || [];
         const state = getUserState();
-        const stealFilter = getStealFilterConfig(state.accountId);
         const plantBlacklist = getPlantBlacklist(state.accountId);
-        const analyzed = analyzeFriendLands(lands, state.gid, '', { stealFilter, plantBlacklist });
+        const analyzed = analyzeFriendLands(lands, state.gid, '', { plantBlacklist });
         await leaveFriendFarm(friendGid);
 
         const landsList = [];
@@ -625,9 +603,8 @@ async function doFriendOperation(friendGid, opType) {
     try {
         const lands = enterReply.lands || [];
         const state = getUserState();
-        const stealFilter = getStealFilterConfig(state.accountId);
         const plantBlacklist = getPlantBlacklist(state.accountId);
-        const status = analyzeFriendLands(lands, state.gid, '', { stealFilter, plantBlacklist });
+        const status = analyzeFriendLands(lands, state.gid, '', { plantBlacklist });
         let count = 0;
 
         if (opType === 'steal') {
@@ -734,28 +711,14 @@ async function visitFriend(friend, totalActions, myGid, accountId) {
         module: 'friend', event: '开始巡查好友', friendName: name, friendGid: gid
     });
 
-    // 检查好友黑名单/白名单
-    const stealFriendFilter = getStealFriendFilterConfig(accountId);
-    if (stealFriendFilter && stealFriendFilter.enabled) {
-        const friendId = toNum(gid);
-        const inList = stealFriendFilter.friendIds.includes(friendId);
-        const mode = stealFriendFilter.mode || 'blacklist';
-        // 黑名单模式：在列表中则跳过；白名单模式：不在列表中则跳过
-        if (mode === 'blacklist' && inList) {
-            log('好友', `${name} 被好友黑名单过滤跳过`, {
-                module: 'friend', event: '好友黑名单跳过', friendName: name, friendGid: gid, mode: 'blacklist'
-            });
-            return;
-        }
-        if (mode === 'whitelist' && !inList) {
-            // 白名单模式只记录在白名单中的好友
-            return;
-        }
-        if (mode === 'whitelist' && inList) {
-            log('好友', `${name} 在好友白名单中，允许访问`, {
-                module: 'friend', event: '好友白名单允许', friendName: name, friendGid: gid, mode: 'whitelist'
-            });
-        }
+    // 检查好友黑名单
+    const friendBlacklist = getFriendBlacklist(accountId);
+    const friendId = toNum(gid);
+    if (friendBlacklist && friendBlacklist.includes(friendId)) {
+        log('好友', `${name} 被好友黑名单过滤跳过`, {
+            module: 'friend', event: '好友黑名单跳过', friendName: name, friendGid: gid
+        });
+        return;
     }
 
     let enterReply;
@@ -789,9 +752,8 @@ async function visitFriend(friend, totalActions, myGid, accountId) {
         return;
     }
 
-    const stealFilter = getStealFilterConfig(accountId);
     const plantBlacklist = getPlantBlacklist(accountId);
-    const status = analyzeFriendLands(lands, myGid, name, { stealFilter, plantBlacklist });
+    const status = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
 
     // 执行操作
     const actions = [];
@@ -938,9 +900,8 @@ async function visitFriendForSteal(friend, totalActions, myGid, accountId) {
         return;
     }
 
-    const stealFilter = getStealFilterConfig(accountId);
     const plantBlacklist = getPlantBlacklist(accountId);
-    const status = analyzeFriendLands(lands, myGid, name, { stealFilter, plantBlacklist });
+    const status = analyzeFriendLands(lands, myGid, name, { plantBlacklist });
 
     const actions = [];
 
@@ -1133,11 +1094,13 @@ async function checkFriends(options = {}) {
     // 如果指定了只执行特定操作，则覆盖配置
     const onlyHelp = options.onlyHelp || false;
     const onlySteal = options.onlySteal || false;
+    const onlyBad = options.onlyBad || false;
     
-    const effectiveHelpEnabled = onlyHelp ? true : (onlySteal ? false : helpEnabled);
-    const effectiveStealEnabled = onlySteal ? true : (onlyHelp ? false : stealEnabled);
+    const effectiveHelpEnabled = onlyHelp ? true : (onlySteal || onlyBad ? false : helpEnabled);
+    const effectiveStealEnabled = onlySteal ? true : (onlyHelp || onlyBad ? false : stealEnabled);
+    const effectiveBadEnabled = onlyBad ? true : (onlyHelp || onlySteal ? false : badEnabled);
     
-    const hasAnyFriendOp = effectiveHelpEnabled || effectiveStealEnabled || badEnabled;
+    const hasAnyFriendOp = effectiveHelpEnabled || effectiveStealEnabled || effectiveBadEnabled;
     if (isCheckingFriends || !state.gid || !hasAnyFriendOp) return false;
     if (inFriendQuietHours()) return false;
 
@@ -1153,7 +1116,6 @@ async function checkFriends(options = {}) {
         }
 
         const blacklist = new Set(getFriendBlacklist());
-        const stealFriendFilter = getStealFriendFilterConfig(state.accountId);
 
         const stealFriends = [];      // 有可偷的好友
         const helpFriends = [];       // 有需要帮助的好友
@@ -1173,16 +1135,7 @@ async function checkFriends(options = {}) {
             const weedNum = p ? toNum(p.weed_num) : 0;
             const insectNum = p ? toNum(p.insect_num) : 0;
 
-            // 检查偷菜黑白名单
-            let canStealThisFriend = true;
-            if (stealFriendFilter && stealFriendFilter.enabled) {
-                const inList = stealFriendFilter.friendIds.includes(gid);
-                const mode = stealFriendFilter.mode || 'blacklist';
-                if (mode === 'blacklist' && inList) canStealThisFriend = false;
-                if (mode === 'whitelist' && !inList) canStealThisFriend = false;
-            }
-
-            if (stealNum > 0 && effectiveStealEnabled && canStealThisFriend) {
+            if (stealNum > 0 && effectiveStealEnabled) {
                 stealFriends.push({ gid, name, stealNum });
             }
 
@@ -1279,6 +1232,43 @@ async function checkFriends(options = {}) {
         return false;
     } finally {
         isCheckingFriends = false;
+    }
+}
+
+/**
+ * 批量好友操作（一键帮助/一键偷取/一键捣乱）
+ * @param {string} opType - 操作类型: 'help' | 'steal' | 'bad'
+ */
+async function doBatchFriendOp(opType) {
+    const state = getUserState();
+    if (!state.gid) {
+        return { ok: false, error: '未登录' };
+    }
+
+    const validTypes = ['help', 'steal', 'bad'];
+    if (!validTypes.includes(opType)) {
+        return { ok: false, error: `无效的操作类型: ${opType}` };
+    }
+
+    const typeLabels = { help: '帮助', steal: '偷取', bad: '捣乱' };
+    log('好友', `开始一键${typeLabels[opType]}`, { module: 'friend', event: `一键${typeLabels[opType]}开始`, opType });
+
+    try {
+        if (opType === 'bad') {
+            // 捣乱操作使用单独的逻辑
+            badExecutedOnStartup = false; // 重置标记允许再次执行
+            await runBadOnceOnStartup();
+            return { ok: true };
+        } else {
+            const result = await checkFriends({
+                onlyHelp: opType === 'help',
+                onlySteal: opType === 'steal',
+            });
+            return { ok: true, result };
+        }
+    } catch (e) {
+        logWarn('好友', `一键${typeLabels[opType]}失败: ${e.message}`);
+        return { ok: false, error: e.message };
     }
 }
 
@@ -1496,4 +1486,5 @@ module.exports = {
     getFriendsList,
     getFriendLandsDetail,
     doFriendOperation,
+    doBatchFriendOp,
 };

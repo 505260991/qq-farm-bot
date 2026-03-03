@@ -131,7 +131,7 @@ async function fertilizeOrganicLoop(landIds) {
         }
 
         idx = (idx + 1) % ids.length;
-        await sleep(100);
+        await sleep(1000);
     }
 
     return successCount;

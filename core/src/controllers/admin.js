@@ -575,6 +575,28 @@ function startAdminServer(dataProvider) {
         }
     });
 
+    // API: 好友批量操作（一键帮助/一键偷取/一键捣乱）
+    app.post('/api/friends/batch-op', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const opType = String((req.body || {}).opType || '');
+            if (!opType) {
+                return res.status(400).json({ ok: false, error: '缺少 opType 参数' });
+            }
+            const data = await provider.doBatchFriendOp(id, opType);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     // API: 好友黑名单
     app.get('/api/friend-blacklist', (req, res) => {
         const id = getAccId(req);
@@ -615,7 +637,7 @@ function startAdminServer(dataProvider) {
         res.json({ ok: true, data: saved });
     });
 
-    // API: 蔬菜黑名单（偷菜过滤）- 使用 stealFilter 的 plantIds
+    // API: 蔬菜黑名单
     app.get('/api/plant-blacklist', authRequired, (req, res) => {
         try {
             const accountId = getAccId(req);
@@ -626,8 +648,8 @@ function startAdminServer(dataProvider) {
                 return res.status(403).json({ ok: false, error: '无权访问此账号' });
             }
 
-            const stealFilter = store.getStealFilterConfig ? store.getStealFilterConfig(accountId) : { enabled: false, mode: 'blacklist', plantIds: [] };
-            res.json({ ok: true, data: stealFilter.plantIds || [] });
+            const list = store.getPlantBlacklist ? store.getPlantBlacklist(accountId) : [];
+            res.json({ ok: true, data: list });
         } catch (e) {
             handleApiError(res, e);
         }
@@ -646,13 +668,12 @@ function startAdminServer(dataProvider) {
             const seedId = Number((req.body || {}).seedId);
             if (!seedId) return res.status(400).json({ ok: false, error: 'Missing seedId' });
 
-            const stealFilter = store.getStealFilterConfig ? store.getStealFilterConfig(accountId) : { enabled: false, mode: 'blacklist', plantIds: [] };
-            const current = stealFilter.plantIds || [];
+            const current = store.getPlantBlacklist ? store.getPlantBlacklist(accountId) : [];
 
             if (!current.includes(seedId)) {
                 const next = [...current, seedId];
-                if (store.setStealFilterConfig) {
-                    store.setStealFilterConfig({ ...stealFilter, plantIds: next }, accountId);
+                if (store.setPlantBlacklist) {
+                    store.setPlantBlacklist(accountId, next);
                 }
             }
 
@@ -660,8 +681,8 @@ function startAdminServer(dataProvider) {
                 provider.broadcastConfig(accountId);
             }
 
-            const saved = store.getStealFilterConfig ? store.getStealFilterConfig(accountId) : { plantIds: [] };
-            res.json({ ok: true, data: saved.plantIds || [] });
+            const saved = store.getPlantBlacklist ? store.getPlantBlacklist(accountId) : [];
+            res.json({ ok: true, data: saved });
         } catch (e) {
             handleApiError(res, e);
         }
@@ -680,20 +701,19 @@ function startAdminServer(dataProvider) {
             const seedId = Number(req.params.seedId);
             if (!seedId) return res.status(400).json({ ok: false, error: 'Missing seedId' });
 
-            const stealFilter = store.getStealFilterConfig ? store.getStealFilterConfig(accountId) : { enabled: false, mode: 'blacklist', plantIds: [] };
-            const current = stealFilter.plantIds || [];
+            const current = store.getPlantBlacklist ? store.getPlantBlacklist(accountId) : [];
             const next = current.filter(id => id !== seedId);
 
-            if (store.setStealFilterConfig) {
-                store.setStealFilterConfig({ ...stealFilter, plantIds: next }, accountId);
+            if (store.setPlantBlacklist) {
+                store.setPlantBlacklist(accountId, next);
             }
 
             if (provider && typeof provider.broadcastConfig === 'function') {
                 provider.broadcastConfig(accountId);
             }
 
-            const saved = store.getStealFilterConfig ? store.getStealFilterConfig(accountId) : { plantIds: [] };
-            res.json({ ok: true, data: saved.plantIds || [] });
+            const saved = store.getPlantBlacklist ? store.getPlantBlacklist(accountId) : [];
+            res.json({ ok: true, data: saved });
         } catch (e) {
             handleApiError(res, e);
         }
@@ -729,6 +749,48 @@ function startAdminServer(dataProvider) {
 
         try {
             const data = await provider.getBag(id);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    // API: 使用背包物品
+    app.post('/api/bag/use', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const { itemId, count } = req.body;
+            if (!itemId) return res.status(400).json({ ok: false, error: '缺少 itemId' });
+            const data = await provider.useItem(id, Number(itemId), Math.max(1, Number(count) || 1));
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    // API: 出售背包物品
+    app.post('/api/bag/sell', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const { items } = req.body;
+            if (!Array.isArray(items) || items.length === 0) {
+                return res.status(400).json({ ok: false, error: '缺少出售物品列表' });
+            }
+            const data = await provider.sellItems(id, items);
             res.json({ ok: true, data });
         } catch (e) {
             handleApiError(res, e);
@@ -876,6 +938,59 @@ function startAdminServer(dataProvider) {
         }
     });
 
+    // API: 测试下线提醒推送（不落盘）
+    app.post('/api/settings/offline-reminder/test', async (req, res) => {
+        try {
+            const currentUser = req.currentUser;
+            const saved = store.getOfflineReminder && currentUser
+                ? store.getOfflineReminder(currentUser.username)
+                : {};
+            const body = (req.body && typeof req.body === 'object') ? req.body : {};
+            const cfg = { ...(saved || {}), ...body };
+
+            const channel = String(cfg.channel || '').trim().toLowerCase();
+            const endpoint = String(cfg.endpoint || '').trim();
+            const token = String(cfg.token || '').trim();
+            const titleBase = String(cfg.title || '账号下线提醒').trim();
+            const msgBase = String(cfg.msg || '账号下线').trim();
+
+            if (!channel) {
+                return res.status(400).json({ ok: false, error: '推送渠道不能为空' });
+            }
+            if (channel === 'webhook' && !endpoint) {
+                return res.status(400).json({ ok: false, error: 'Webhook 渠道需要填写接口地址' });
+            }
+
+            const now = new Date();
+            const ts = now.toISOString().replace('T', ' ').slice(0, 19);
+            const { sendPushooMessage } = require('../services/push');
+            const ret = await sendPushooMessage({
+                channel,
+                endpoint,
+                token,
+                title: `${titleBase}（测试）`,
+                content: `${msgBase}\n\n这是一条下线提醒测试消息。\n时间: ${ts}`,
+            });
+
+            if (!ret) {
+                return res.status(400).json({ ok: false, error: '推送失败：无返回结果' });
+            }
+            
+            const isSuccess = ret.ok || 
+                ret.code === 'ok' || 
+                ret.code === '0' || 
+                String(ret.msg || '').includes('成功') ||
+                String(ret.raw?.status || '').toLowerCase() === 'success';
+            
+            if (!isSuccess && ret.msg && !String(ret.msg).includes('成功')) {
+                return res.status(400).json({ ok: false, error: ret.msg || '推送失败', data: ret });
+            }
+            return res.json({ ok: true, data: ret, message: ret.msg || '推送成功' });
+        } catch (e) {
+            return res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
     // API: 获取配置
     app.get('/api/settings', async (req, res) => {
         try {
@@ -893,12 +1008,15 @@ function startAdminServer(dataProvider) {
             const preferredSeed = store.getPreferredSeed(id);
             const friendQuietHours = store.getFriendQuietHours(id);
             const automation = store.getAutomation(id);
+            const stealDelaySeconds = (typeof store.getStealDelaySeconds === 'function') ? store.getStealDelaySeconds(id) : 0;
+            const plantOrderRandom = (typeof store.getPlantOrderRandom === 'function') ? store.getPlantOrderRandom(id) : false;
+            const plantDelaySeconds = (typeof store.getPlantDelaySeconds === 'function') ? store.getPlantDelaySeconds(id) : 0;
             const ui = store.getUI();
             // 获取用户隔离的下线提醒配置
             const offlineReminder = store.getOfflineReminder && currentUser
                 ? store.getOfflineReminder(currentUser.username)
                 : { channel: 'webhook', reloginUrlMode: 'none', endpoint: '', token: '', title: '账号下线提醒', msg: '账号下线', offlineDeleteSec: 120 };
-            res.json({ ok: true, data: { intervals, strategy, preferredSeed, friendQuietHours, automation, ui, offlineReminder } });
+            res.json({ ok: true, data: { intervals, strategy, preferredSeed, friendQuietHours, automation, stealDelaySeconds, plantOrderRandom, plantDelaySeconds, ui, offlineReminder } });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -1366,6 +1484,39 @@ function startAdminServer(dataProvider) {
         };
         const list = provider.getLogs(id, options);
         res.json({ ok: true, data: list });
+    });
+
+    // API: 清空当前账号运行日志
+    app.delete('/api/logs', (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const data = provider.clearLogs(id);
+
+            if (io && provider && typeof provider.getLogs === 'function') {
+                const accountLogs = provider.getLogs(id, { limit: 100 });
+                io.to(`account:${id}`).emit('logs:snapshot', {
+                    accountId: id,
+                    logs: Array.isArray(accountLogs) ? accountLogs : [],
+                });
+
+                const allLogs = provider.getLogs('', { limit: 100 });
+                io.to('account:all').emit('logs:snapshot', {
+                    accountId: 'all',
+                    logs: Array.isArray(allLogs) ? allLogs : [],
+                });
+            }
+
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
     });
 
     // ============ QR Code Login APIs (无需账号选择) ============

@@ -7,15 +7,16 @@ import LandCard from '@/components/LandCard.vue'
 import { useAccountStore } from '@/stores/account'
 import { useFriendStore } from '@/stores/friend'
 import { useStatusStore } from '@/stores/status'
+import { useToastStore } from '@/stores/toast'
 
 const accountStore = useAccountStore()
 const friendStore = useFriendStore()
 const statusStore = useStatusStore()
+const toast = useToastStore()
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { friends, loading, friendLands, friendLandsLoading, blacklist } = storeToRefs(friendStore)
 const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
 
-// Confirm Modal state
 const showConfirm = ref(false)
 const confirmMessage = ref('')
 const confirmLoading = ref(false)
@@ -23,6 +24,8 @@ const pendingAction = ref<(() => Promise<void>) | null>(null)
 const avatarErrorKeys = ref<Set<string>>(new Set())
 const searchKeyword = ref('')
 const showBlacklistModal = ref(false)
+
+const batchLoading = ref(false)
 
 function confirmAction(msg: string, action: () => Promise<void>) {
   confirmMessage.value = msg
@@ -47,7 +50,6 @@ async function onConfirm() {
   }
 }
 
-// Track expanded friends
 const expandedFriends = ref<Set<string>>(new Set())
 const filteredFriends = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
@@ -104,9 +106,6 @@ function toggleFriend(friendId: string) {
     expandedFriends.value.delete(friendId)
   }
   else {
-    // Collapse others? The original code does:
-    // document.querySelectorAll('.friend-lands').forEach(e => e.style.display = 'none');
-    // So it behaves like an accordion.
     expandedFriends.value.clear()
     expandedFriends.value.add(friendId)
     if (currentAccountId.value && currentAccount.value?.running && status.value?.connection?.connected) {
@@ -175,17 +174,44 @@ function handleFriendAvatarError(friend: any) {
   avatarErrorKeys.value.add(key)
 }
 
-// 根据 gid 获取好友名字
 function getFriendNameByGid(gid: number) {
   const friend = friends.value.find((f: any) => Number(f.gid) === gid)
   return friend?.name || `GID:${gid}`
 }
 
-// 从黑名单移除
 async function handleRemoveFromBlacklist(gid: number) {
   if (!currentAccountId.value)
     return
   await friendStore.toggleBlacklist(currentAccountId.value, gid)
+}
+
+async function handleBatchOp(opType: 'help' | 'steal' | 'bad') {
+  if (!currentAccountId.value || batchLoading.value) return
+
+  const opNames: Record<string, string> = {
+    help: '一键帮助',
+    steal: '一键偷取',
+    bad: '一键捣乱',
+  }
+
+  const action = async () => {
+    batchLoading.value = true
+    try {
+      const res = await friendStore.batchOperate(currentAccountId.value!, opType)
+      if (res.ok) {
+        toast.success(`${opNames[opType]}完成`)
+        await friendStore.fetchFriends(currentAccountId.value!)
+      } else {
+        toast.error(res.error || `${opNames[opType]}失败`)
+      }
+    } catch (e: any) {
+      toast.error(e?.message || `${opNames[opType]}失败`)
+    } finally {
+      batchLoading.value = false
+    }
+  }
+
+  confirmAction(`确定执行${opNames[opType]}吗？`, action)
 }
 </script>
 
@@ -244,6 +270,34 @@ async function handleRemoveFromBlacklist(gid: number) {
     </div>
 
     <div v-else class="space-y-4">
+      <div class="flex flex-wrap gap-2 rounded-lg bg-white p-3 shadow dark:bg-gray-800">
+        <span class="flex items-center text-sm text-gray-500 dark:text-gray-400">批量操作：</span>
+        <button
+          class="rounded bg-green-100 px-3 py-1.5 text-sm text-green-700 transition hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+          :disabled="batchLoading"
+          @click="handleBatchOp('help')"
+        >
+          <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+          一键帮助
+        </button>
+        <button
+          class="rounded bg-blue-100 px-3 py-1.5 text-sm text-blue-700 transition hover:bg-blue-200 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+          :disabled="batchLoading"
+          @click="handleBatchOp('steal')"
+        >
+          <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+          一键偷取
+        </button>
+        <button
+          class="rounded bg-red-100 px-3 py-1.5 text-sm text-red-700 transition hover:bg-red-200 disabled:opacity-50 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+          :disabled="batchLoading"
+          @click="handleBatchOp('bad')"
+        >
+          <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+          一键捣乱
+        </button>
+      </div>
+
       <div
         v-for="friend in filteredFriends"
         :key="friend.gid"
@@ -346,7 +400,6 @@ async function handleRemoveFromBlacklist(gid: number) {
       @cancel="!confirmLoading && (showConfirm = false)"
     />
 
-    <!-- 好友黑名单管理弹窗 -->
     <div
       v-if="showBlacklistModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
