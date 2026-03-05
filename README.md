@@ -125,6 +125,29 @@ docker compose logs -f
 docker compose down
 ```
 
+### 数据持久化
+
+`docker-compose.yml` 已将数据目录挂载：
+
+| 宿主机路径 | 容器内路径 |
+|-----------|-----------|
+| `./data`  | `/app/core/data` |
+
+账号与配置数据保存在 `./data/accounts.json` 和 `./data/store.json`。
+
+### 设置管理密码
+
+在 `docker-compose.yml` 的 `environment` 中配置：
+
+```yaml
+environment:
+  ADMIN_PASSWORD: 你的强密码
+```
+
+修改后执行 `docker compose up -d` 重启生效。
+
+---
+
 ## 二进制发布版（无需 Node.js）
 
 ### 构建
@@ -160,6 +183,7 @@ chmod +x ./qq-farm-bot-linux-x64 && ./qq-farm-bot-linux-x64
 ## 登录与安全
 
 - 面板首次访问需要登录
+- 默认管理账号：`admin`
 - 默认管理密码：`admin`
 - **建议部署后立即修改为强密码**
 
