@@ -42,7 +42,6 @@ export interface OfflineConfig {
   token: string
   title: string
   msg: string
-  offlineDeleteSec: number
 }
 
 export interface UIConfig {
@@ -77,7 +76,6 @@ export const useSettingStore = defineStore('setting', () => {
       token: '',
       title: '账号下线提醒',
       msg: '账号下线',
-      offlineDeleteSec: 120,
     },
     stealDelaySeconds: 0,
     plantOrderRandom: false,
@@ -108,7 +106,6 @@ export const useSettingStore = defineStore('setting', () => {
           token: '',
           title: '账号下线提醒',
           msg: '账号下线',
-          offlineDeleteSec: 120,
         }
         settings.value.stealDelaySeconds = d.stealDelaySeconds ?? 0
         settings.value.plantOrderRandom = d.plantOrderRandom ?? false

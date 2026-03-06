@@ -284,7 +284,6 @@ async function runStealTick(auto) {
         return;
     }
     if (!auto.friend_steal) {
-        log('系统', '偷菜巡查跳过：功能未开启', { module: 'system', event: '偷菜巡查', result: 'skipped', reason: 'disabled' });
         return;
     }
     stealTaskRunning = true;

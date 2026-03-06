@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import { useAccountStore } from '@/stores/account'
@@ -18,6 +18,19 @@ const list = ref<any[]>([])
 const sortKey = ref('exp')
 const imageErrors = ref<Record<string | number, boolean>>({})
 const showBlacklistModal = ref(false)
+const searchKeyword = ref('')
+
+const filteredList = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword)
+    return list.value
+
+  return list.value.filter((item: any) => {
+    const name = String(item?.name || '').toLowerCase()
+    const seedId = String(item?.seedId || '')
+    return name.includes(keyword) || seedId.includes(keyword)
+  })
+})
 
 const sortOptions = [
   { value: 'exp', label: '经验/小时' },
@@ -139,6 +152,18 @@ function formatGrowTime(seconds: any) {
           <div class="i-carbon-list-blocked" />
           偷菜黑名单 ({{ blacklist.length }})
         </button>
+        <div class="relative">
+          <div class="i-carbon-search absolute left-3 top-1/2 text-gray-400 -translate-y-1/2" />
+          <input
+            v-model="searchKeyword"
+            type="text"
+            placeholder="搜索作物..."
+            class="w-full border border-gray-300 rounded-lg bg-white py-2 pl-10 pr-4 text-sm sm:w-64 dark:border-gray-600 focus:border-blue-500 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+        </div>
+        <div v-if="list.length" class="text-sm text-gray-500">
+          共 {{ filteredList.length }}/{{ list.length }} 种作物
+        </div>
         <label class="whitespace-nowrap text-sm font-medium">排序方式:</label>
         <BaseSelect
           v-model="sortKey"
@@ -160,10 +185,14 @@ function formatGrowTime(seconds: any) {
       暂无数据
     </div>
 
+    <div v-else-if="filteredList.length === 0" class="rounded-lg bg-white p-8 text-center text-gray-500 shadow dark:bg-gray-800">
+      无匹配结果
+    </div>
+
     <div v-else class="space-y-4">
       <!-- Mobile Card View -->
       <div class="block sm:hidden space-y-4">
-        <div v-for="(item, idx) in list" :key="idx" class="border border-gray-200 rounded-lg bg-white p-4 shadow dark:border-gray-700 dark:bg-gray-800">
+        <div v-for="(item, idx) in filteredList" :key="idx" class="border border-gray-200 rounded-lg bg-white p-4 shadow dark:border-gray-700 dark:bg-gray-800">
           <div class="mb-3 flex items-start gap-3">
             <div class="relative h-12 w-12 flex shrink-0 items-center justify-center overflow-hidden border border-gray-200 rounded-lg bg-gray-100 dark:border-gray-600 dark:bg-gray-700">
               <img
@@ -259,7 +288,7 @@ function formatGrowTime(seconds: any) {
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-              <tr v-for="(item, idx) in list" :key="idx" class="group transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <tr v-for="(item, idx) in filteredList" :key="idx" class="group transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <td class="sticky left-0 bg-white px-4 py-2 shadow-[1px_0_0_0_rgba(0,0,0,0.05)] transition-colors dark:bg-gray-800 group-hover:bg-gray-50 dark:shadow-[1px_0_0_0_rgba(255,255,255,0.05)] dark:group-hover:bg-gray-700/50">
                   <div class="flex items-center gap-3">
                     <div class="relative h-10 w-10 flex shrink-0 items-center justify-center overflow-hidden border border-gray-200 rounded-lg bg-gray-100 dark:border-gray-600 dark:bg-gray-700">

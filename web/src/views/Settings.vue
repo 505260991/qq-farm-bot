@@ -82,7 +82,6 @@ const localOffline = ref({
   token: '',
   title: '',
   msg: '',
-  offlineDeleteSec: 120,
 })
 
 const passwordForm = ref({
@@ -687,13 +686,6 @@ async function handleTestOffline() {
               label="标题"
               type="text"
               placeholder="提醒标题"
-            />
-            <BaseInput
-              v-model.number="localOffline.offlineDeleteSec"
-              label="离线删除账号 (秒)"
-              type="number"
-              min="0"
-              placeholder="默认 0 (不删除)"
             />
           </div>
 

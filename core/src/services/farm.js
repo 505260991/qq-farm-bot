@@ -5,7 +5,7 @@
 const protobuf = require('protobufjs');
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('../config/config');
 const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime, getAllSeeds, getPlantById, getSeedImageBySeedId } = require('../config/gameConfig');
-const { isAutomationOn, getPreferredSeed, getAutomation, getPlantingStrategy } = require('../models/store');
+const { isAutomationOn, getPreferredSeed, getAutomation, getPlantingStrategy, getPlantDelaySeconds } = require('../models/store');
 const { sendMsgAsync, getUserState, networkEvents, getWsErrorState } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep } = require('../utils/utils');
@@ -273,9 +273,11 @@ function encodePlantRequest(seedId, landIds) {
 }
 
 /**
- * 种植 - 游戏中拖动种植间隔很短，这里用 50ms
+ * 种植 - 游戏中拖动种植间隔很短，默认 50ms，可通过 plantDelaySeconds 配置
  */
 async function plantSeeds(seedId, landIds) {
+    const delaySec = getPlantDelaySeconds();
+    const delayMs = delaySec > 0 ? delaySec * 1000 : 50;
     let successCount = 0;
     for (const landId of landIds) {
         try {
@@ -286,7 +288,7 @@ async function plantSeeds(seedId, landIds) {
         } catch (e) {
             logWarn('种植', `土地#${landId} 失败: ${e.message}`);
         }
-        if (landIds.length > 1) await sleep(50);  // 50ms 间隔
+        if (landIds.length > 1) await sleep(delayMs);
     }
     return successCount;
 }

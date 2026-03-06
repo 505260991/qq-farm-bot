@@ -53,7 +53,6 @@ function createRuntimeEngine(options = {}) {
   })
 
   const {
-    getOfflineAutoDeleteMs,
     triggerOfflineReminder,
   } = reloginReminder
 
@@ -70,10 +69,8 @@ function createRuntimeEngine(options = {}) {
     addAccountLog,
     normalizeStatusForPanel,
     buildConfigSnapshotForAccount,
-    getOfflineAutoDeleteMs,
     triggerOfflineReminder,
     addOrUpdateAccount: store.addOrUpdateAccount,
-    deleteAccount: store.deleteAccount,
     onStatusSync: (accountId, status, accountName) => {
       runtimeEvents.emit('status', { accountId, status, accountName })
       if (onStatusSync) onStatusSync(accountId, status, accountName)

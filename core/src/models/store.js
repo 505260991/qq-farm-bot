@@ -22,7 +22,6 @@ const DEFAULT_OFFLINE_REMINDER = {
     token: '',
     title: '账号下线提醒',
     msg: '账号下线',
-    offlineDeleteSec: 0,
 };
 // ============ 全局配置 ============
 const DEFAULT_ACCOUNT_CONFIG = {
@@ -112,10 +111,6 @@ const globalConfig = {
 
 function normalizeOfflineReminder(input) {
     const src = (input && typeof input === 'object') ? input : {};
-    let offlineDeleteSec = Number.parseInt(src.offlineDeleteSec, 10);
-    if (!Number.isFinite(offlineDeleteSec) || offlineDeleteSec < 0) {
-        offlineDeleteSec = DEFAULT_OFFLINE_REMINDER.offlineDeleteSec;
-    }
     const rawChannel = (src.channel !== undefined && src.channel !== null)
         ? String(src.channel).trim().toLowerCase()
         : '';
@@ -151,7 +146,6 @@ function normalizeOfflineReminder(input) {
         token,
         title,
         msg,
-        offlineDeleteSec,
     };
 }
 

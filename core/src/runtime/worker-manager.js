@@ -14,10 +14,8 @@ function createWorkerManager(options) {
         addAccountLog,
         normalizeStatusForPanel,
         buildConfigSnapshotForAccount,
-        getOfflineAutoDeleteMs,
         triggerOfflineReminder,
         addOrUpdateAccount,
-        deleteAccount,
         onStatusSync,
         onWorkerLog,
     } = options;
@@ -226,35 +224,6 @@ function createWorkerManager(options) {
                 worker.disconnectedSince = 0;
                 worker.autoDeleteTriggered = false;
                 worker.wsError = null;
-            } else if (!worker.stopping) {
-                const now = Date.now();
-                if (!worker.disconnectedSince) worker.disconnectedSince = now;
-                const offlineMs = now - worker.disconnectedSince;
-                const autoDeleteMs = getOfflineAutoDeleteMs();
-                if (!worker.autoDeleteTriggered && offlineMs >= autoDeleteMs) {
-                    worker.autoDeleteTriggered = true;
-                    const offlineMin = Math.floor(offlineMs / 60000);
-                    log('系统', `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，自动删除账号信息`);
-                    triggerOfflineReminder({
-                        accountId,
-                        accountName: worker.name,
-                        reason: 'offline_timeout',
-                        offlineMs,
-                    });
-                    addAccountLog(
-                        'offline_delete',
-                        `账号 ${worker.name} 持续离线 ${offlineMin} 分钟，已自动删除`,
-                        accountId,
-                        worker.name,
-                        { reason: 'offline_timeout', offlineMs },
-                    );
-                    stopWorker(accountId);
-                    try {
-                        deleteAccount(accountId);
-                    } catch (e) {
-                        log('错误', `删除离线账号失败: ${e.message}`);
-                    }
-                }
             }
         } else if (msg.type === 'log') {
             // 保存日志
