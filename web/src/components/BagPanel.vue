@@ -82,10 +82,15 @@ function getPriceClass(item: any) {
 
 const sellableItems = computed(() => items.value.filter(canSellItem))
 
+// 全选时默认排除种子（种子需要手动勾选）
+const autoSelectableItems = computed(() =>
+  sellableItems.value.filter(it => it.category !== 'seed'),
+)
+
 const allSellableSelected = computed(() => {
-  if (sellableItems.value.length === 0)
+  if (autoSelectableItems.value.length === 0)
     return false
-  return sellableItems.value.every(it => selectedIds.value.has(Number(it.id)))
+  return autoSelectableItems.value.every(it => selectedIds.value.has(Number(it.id)))
 })
 
 function toggleSelectAll() {
@@ -93,7 +98,8 @@ function toggleSelectAll() {
     selectedIds.value = new Set()
   }
   else {
-    selectedIds.value = new Set(sellableItems.value.map(it => Number(it.id)))
+    // 全选时只选择非种子物品
+    selectedIds.value = new Set(autoSelectableItems.value.map(it => Number(it.id)))
   }
 }
 

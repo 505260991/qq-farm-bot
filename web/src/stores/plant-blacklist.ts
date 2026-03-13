@@ -1,6 +1,8 @@
+import type { ApiResult } from '@/api/result'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
+import { unwrapOk } from '@/api/result'
 import { useAccountStore } from './account'
 
 export interface PlantBlacklistItem {
@@ -21,9 +23,7 @@ export const usePlantBlacklistStore = defineStore('plant-blacklist', () => {
       const res = await api.get('/api/plant-blacklist', {
         headers: { 'x-account-id': accountId },
       })
-      if (res.data.ok) {
-        blacklist.value = res.data.data || []
-      }
+      blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '加载黑名单失败') || []
     }
     catch { /* ignore */ }
   }
@@ -36,9 +36,7 @@ export const usePlantBlacklistStore = defineStore('plant-blacklist', () => {
     const res = await api.post('/api/plant-blacklist', { seedId }, {
       headers: { 'x-account-id': accountId },
     })
-    if (res.data.ok) {
-      blacklist.value = res.data.data || []
-    }
+    blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '更新黑名单失败') || []
   }
 
   async function removeFromBlacklist(seedId: number) {
@@ -49,9 +47,7 @@ export const usePlantBlacklistStore = defineStore('plant-blacklist', () => {
     const res = await api.delete(`/api/plant-blacklist/${seedId}`, {
       headers: { 'x-account-id': accountId },
     })
-    if (res.data.ok) {
-      blacklist.value = res.data.data || []
-    }
+    blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '更新黑名单失败') || []
   }
 
   async function toggleBlacklist(seedId: number) {
@@ -75,9 +71,7 @@ export const usePlantBlacklistStore = defineStore('plant-blacklist', () => {
     const res = await api.put('/api/plant-blacklist', { seedIds }, {
       headers: { 'x-account-id': accountId },
     })
-    if (res.data.ok) {
-      blacklist.value = res.data.data || []
-    }
+    blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '更新黑名单失败') || []
   }
 
   async function clearBlacklist() {
@@ -88,9 +82,7 @@ export const usePlantBlacklistStore = defineStore('plant-blacklist', () => {
     const res = await api.put('/api/plant-blacklist', { seedIds: [] }, {
       headers: { 'x-account-id': accountId },
     })
-    if (res.data.ok) {
-      blacklist.value = res.data.data || []
-    }
+    blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '更新黑名单失败') || []
   }
 
   return {

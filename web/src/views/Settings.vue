@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import type { ApiResult } from '@/api/result'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref, watch, watchEffect } from 'vue'
 import api from '@/api'
+import { getErrorMessage } from '@/api/error'
+import { unwrapOk } from '@/api/result'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
@@ -11,6 +14,7 @@ import { useAccountStore } from '@/stores/account'
 import { useFarmStore } from '@/stores/farm'
 import { useSettingStore } from '@/stores/setting'
 import { useUserStore } from '@/stores/user'
+import AccountsView from '@/views/Accounts.vue'
 
 const settingStore = useSettingStore()
 const accountStore = useAccountStore()
@@ -21,11 +25,14 @@ const { settings, loading } = storeToRefs(settingStore)
 const { currentAccountId, accounts } = storeToRefs(accountStore)
 const { seeds } = storeToRefs(farmStore)
 
-const saving = ref(false)
+const savingStrategy = ref(false)
+const savingAutomation = ref(false)
 const passwordSaving = ref(false)
 const offlineSaving = ref(false)
 const offlineTesting = ref(false)
-const adminWxSaving = ref(false)
+
+// 当前激活的标签页
+const activeTab = ref<'account' | 'user' | 'strategy' | 'automation'>('account')
 
 const modalVisible = ref(false)
 const modalConfig = ref({
@@ -81,6 +88,14 @@ const localSettings = ref({
     // 秒收取和蹲守偷菜
     fast_harvest: false,
     stakeout_steal: false,
+    // GUID索引配置
+    use_visitor_gids: false,
+    use_guid_range: false,
+    guid_range_start: 100000000,
+    guid_range_end: 119000000,
+    guid_index_current: 100000000,
+    guid_index_completed: false,
+    guid_index_interval: 3,
   },
   // 秒收取配置
   fastHarvestAdvanceMs: 200,
@@ -131,14 +146,6 @@ const localOffline = ref({
   msg: '',
 })
 
-const localAdminWxConfig = ref({
-  showWxConfigTab: true,
-  showWxLoginTab: true,
-  apiBase: 'http://127.0.0.1:8059/api',
-  apiKey: '',
-  proxyApiUrl: 'https://api.aineishe.com/api/wxnc',
-})
-
 const passwordForm = ref({
   old: '',
   new: '',
@@ -186,6 +193,13 @@ function syncLocalSettings() {
         skip_own_weed_bug: false,
         fast_harvest: false,
         stakeout_steal: false,
+        use_visitor_gids: false,
+        use_guid_range: false,
+        guid_range_start: 100000000,
+        guid_range_end: 119000000,
+        guid_index_current: 100000000,
+        guid_index_completed: false,
+        guid_index_interval: 3,
       }
     }
     else {
@@ -211,6 +225,13 @@ function syncLocalSettings() {
         skip_own_weed_bug: false,
         fast_harvest: false,
         stakeout_steal: false,
+        use_visitor_gids: false,
+        use_guid_range: false,
+        guid_range_start: 100000000,
+        guid_range_end: 119000000,
+        guid_index_current: 100000000,
+        guid_index_completed: false,
+        guid_index_interval: 3,
       }
       localSettings.value.automation = {
         ...defaults,
@@ -233,41 +254,6 @@ async function loadData() {
     await settingStore.fetchSettings(currentAccountId.value)
     syncLocalSettings()
     await farmStore.fetchSeeds(currentAccountId.value)
-  }
-  if (userStore.isAdmin) {
-    await loadAdminWxConfig()
-  }
-}
-
-async function loadAdminWxConfig() {
-  try {
-    const { data } = await api.get('/api/admin/wx-config')
-    if (data?.ok && data?.data) {
-      localAdminWxConfig.value = { ...localAdminWxConfig.value, ...data.data }
-    }
-  }
-  catch (e) {
-    console.error('加载管理员微信配置失败:', e)
-  }
-}
-
-async function handleSaveAdminWxConfig() {
-  adminWxSaving.value = true
-  try {
-    const { data } = await api.post('/api/admin/wx-config', localAdminWxConfig.value)
-    if (data?.ok) {
-      showAlert('管理设置已保存')
-    }
-    else {
-      showAlert(`保存失败: ${data?.error || '未知错误'}`, 'danger')
-    }
-  }
-  catch (e: any) {
-    const msg = e?.response?.data?.error || e?.message || '请求失败'
-    showAlert(`保存失败: ${msg}`, 'danger')
-  }
-  finally {
-    adminWxSaving.value = false
   }
 }
 
@@ -433,21 +419,54 @@ watchEffect(async () => {
   }
 })
 
-async function saveAccountSettings() {
+async function saveStrategySettings() {
   if (!currentAccountId.value)
     return
-  saving.value = true
+  savingStrategy.value = true
   try {
-    const res = await settingStore.saveSettings(currentAccountId.value, localSettings.value)
+    const strategyData = {
+      plantingStrategy: localSettings.value.plantingStrategy,
+      preferredSeedId: localSettings.value.preferredSeedId,
+      stealDelaySeconds: localSettings.value.stealDelaySeconds,
+      plantOrderRandom: localSettings.value.plantOrderRandom,
+      plantDelaySeconds: localSettings.value.plantDelaySeconds,
+      intervals: localSettings.value.intervals,
+      friendQuietHours: localSettings.value.friendQuietHours,
+    }
+    const res = await settingStore.saveStrategySettings(currentAccountId.value, strategyData)
     if (res.ok) {
-      showAlert('账号设置已保存')
+      showAlert('策略设置已保存')
     }
     else {
       showAlert(`保存失败: ${res.error}`, 'danger')
     }
   }
   finally {
-    saving.value = false
+    savingStrategy.value = false
+  }
+}
+
+async function saveAutomationSettings() {
+  if (!currentAccountId.value)
+    return
+  savingAutomation.value = true
+  try {
+    const automationData = {
+      automation: localSettings.value.automation,
+      fastHarvestAdvanceMs: localSettings.value.fastHarvestAdvanceMs,
+      stakeoutSteal: localSettings.value.stakeoutSteal,
+      stakeoutFriendList: localSettings.value.stakeoutFriendList,
+    }
+    const res = await settingStore.saveAutomationSettings(currentAccountId.value, automationData)
+    if (res.ok) {
+      showAlert('自动控制设置已保存')
+    }
+    else {
+      showAlert(`保存失败: ${res.error}`, 'danger')
+    }
+  }
+  finally {
+    savingAutomation.value = false
   }
 }
 
@@ -503,16 +522,11 @@ async function handleTestOffline() {
   offlineTesting.value = true
   try {
     const { data } = await api.post('/api/settings/offline-reminder/test', localOffline.value)
-    if (data?.ok) {
-      showAlert('测试消息发送成功')
-    }
-    else {
-      showAlert(`测试失败: ${data?.error || '未知错误'}`, 'danger')
-    }
+    unwrapOk<any>(data as ApiResult<any>, '测试失败')
+    showAlert('测试消息发送成功')
   }
   catch (e: any) {
-    const msg = e?.response?.data?.error || e?.message || '请求失败'
-    showAlert(`测试失败: ${msg}`, 'danger')
+    showAlert(`测试失败: ${getErrorMessage(e, '请求失败')}`, 'danger')
   }
   finally {
     offlineTesting.value = false
@@ -521,477 +535,521 @@ async function handleTestOffline() {
 </script>
 
 <template>
-  <div class="settings-page">
+  <div class="settings-page h-full flex flex-col p-4">
     <div v-if="loading" class="py-4 text-center text-gray-500">
       <div class="i-svg-spinners-ring-resize mx-auto mb-2 text-2xl" />
       <p>加载中...</p>
     </div>
 
-    <div v-else class="grid grid-cols-1 mt-12 gap-4 text-sm lg:grid-cols-2">
-      <div v-if="currentAccountId" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
-        <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
-          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
-            <div class="i-fas-cogs" />
-            策略设置
-            <span v-if="currentAccountName" class="ml-2 text-sm text-gray-500 font-normal dark:text-gray-400">
-              ({{ currentAccountName }})
-            </span>
-          </h3>
+    <div v-else class="h-full flex flex-col">
+      <!-- 标签页导航 -->
+      <div class="mb-4 flex gap-2 overflow-x-auto pb-1">
+        <button
+          class="shrink-0 rounded-lg px-4 py-2 font-medium transition-colors"
+          :class="activeTab === 'account'
+            ? 'bg-blue-500 text-white shadow-md'
+            : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+          @click="activeTab = 'account'"
+        >
+          <div class="flex items-center space-x-2">
+            <div class="i-carbon-user-multiple text-lg" />
+            <span>账号管理</span>
+          </div>
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 font-medium transition-colors"
+          :class="activeTab === 'user'
+            ? 'bg-blue-500 text-white shadow-md'
+            : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+          @click="activeTab = 'user'"
+        >
+          <div class="flex items-center space-x-2">
+            <div class="i-carbon-user text-lg" />
+            <span>本用户</span>
+          </div>
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 font-medium transition-colors"
+          :class="activeTab === 'strategy'
+            ? 'bg-blue-500 text-white shadow-md'
+            : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+          @click="activeTab = 'strategy'"
+        >
+          <div class="flex items-center space-x-2">
+            <div class="i-fas-cogs text-lg" />
+            <span>策略设置</span>
+          </div>
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 font-medium transition-colors"
+          :class="activeTab === 'automation'
+            ? 'bg-blue-500 text-white shadow-md'
+            : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+          @click="activeTab = 'automation'"
+        >
+          <div class="flex items-center space-x-2">
+            <div class="i-fas-toggle-on text-lg" />
+            <span>自动控制</span>
+          </div>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-hidden overflow-y-auto">
+        <div v-if="activeTab === 'account'" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
+          <AccountsView />
         </div>
 
-        <div class="p-4 space-y-3">
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <BaseSelect
-              v-model="localSettings.plantingStrategy"
-              label="种植策略"
-              :options="plantingStrategyOptions"
-            />
-            <BaseSelect
-              v-if="localSettings.plantingStrategy === 'preferred'"
-              v-model="localSettings.preferredSeedId"
-              label="优先种植种子"
-              :options="preferredSeedOptions"
-            />
-            <div v-else class="flex flex-col gap-1.5">
-              <label class="text-sm text-gray-700 font-medium dark:text-gray-300">策略选种预览</label>
-              <div
-                class="w-full flex items-center justify-between border border-gray-200 rounded-lg bg-gray-50 px-3 py-2 text-gray-500 dark:border-gray-600 dark:bg-gray-800/50 dark:text-gray-400"
-              >
-                <span class="truncate">{{ strategyPreviewLabel ?? '加载中...' }}</span>
-                <div class="i-carbon-chevron-down shrink-0 text-lg text-gray-400" />
-              </div>
-            </div>
+        <!-- 本用户标签页 -->
+        <div v-if="activeTab === 'user'" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
+          <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
+              <div class="i-carbon-password" />
+              修改用户密码
+            </h3>
           </div>
 
-          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <BaseInput
-              v-model.number="localSettings.intervals.farmMin"
-              label="农场巡查最小 (秒)"
-              type="number"
-              min="1"
-            />
-            <BaseInput
-              v-model.number="localSettings.intervals.farmMax"
-              label="农场巡查最大 (秒)"
-              type="number"
-              min="1"
-            />
-          </div>
-
-          <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
-            <BaseInput
-              v-model.number="localSettings.intervals.helpMin"
-              label="帮助巡查最小 (秒)"
-              type="number"
-              min="1"
-            />
-            <BaseInput
-              v-model.number="localSettings.intervals.helpMax"
-              label="帮助巡查最大 (秒)"
-              type="number"
-              min="1"
-            />
-          </div>
-
-          <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
-            <BaseInput
-              v-model.number="localSettings.intervals.stealMin"
-              label="偷菜巡查最小 (秒)"
-              type="number"
-              min="1"
-            />
-            <BaseInput
-              v-model.number="localSettings.intervals.stealMax"
-              label="偷菜巡查最大 (秒)"
-              type="number"
-              min="1"
-            />
-          </div>
-
-          <div class="mt-4 flex flex-wrap items-center gap-4 border-t pt-3 dark:border-gray-700">
-            <BaseSwitch
-              v-model="localSettings.friendQuietHours.enabled"
-              label="启用静默时段"
-            />
-            <div class="flex items-center gap-2">
-              <BaseInput
-                v-model="localSettings.friendQuietHours.start"
-                type="time"
-                class="w-24"
-                :disabled="!localSettings.friendQuietHours.enabled"
-              />
-              <span class="text-gray-500">-</span>
-              <BaseInput
-                v-model="localSettings.friendQuietHours.end"
-                type="time"
-                class="w-24"
-                :disabled="!localSettings.friendQuietHours.enabled"
-              />
-            </div>
-          </div>
-
-          <div class="mt-4 border-t pt-3 space-y-3 dark:border-gray-700">
-            <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
-              种植与偷菜延迟设置
-            </h4>
+          <div class="p-4 space-y-3">
             <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <BaseSwitch
-                v-model="localSettings.plantOrderRandom"
-                label="种植顺序随机"
+              <BaseInput
+                v-model="passwordForm.old"
+                label="当前密码"
+                type="password"
+                placeholder="当前用户密码"
               />
               <BaseInput
-                v-model.number="localSettings.plantDelaySeconds"
-                label="种植延迟 (秒)"
-                type="number"
-                min="0"
+                v-model="passwordForm.new"
+                label="新密码"
+                type="password"
+                placeholder="至少 4 位"
               />
               <BaseInput
-                v-model.number="localSettings.stealDelaySeconds"
-                label="偷菜延迟 (秒)"
-                type="number"
-                min="0"
+                v-model="passwordForm.confirm"
+                label="确认新密码"
+                type="password"
+                placeholder="再次输入新密码"
               />
             </div>
-          </div>
-        </div>
 
-        <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
-          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
-            <div class="i-fas-toggle-on" />
-            自动控制
-          </h3>
-        </div>
-
-        <div class="flex-1 p-4 space-y-4">
-          <div class="flex items-center gap-4 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-            <BaseSwitch v-model="automationMasterSwitch" label="总控开关" />
-            <span class="text-xs text-gray-500 dark:text-gray-400">开启后自动打开所有自动控制开关</span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <BaseSwitch v-model="localSettings.automation.farm" label="自动种植收获" />
-            <BaseSwitch v-model="localSettings.automation.task_plant" label="按照任务种植" />
-            <BaseSwitch v-model="localSettings.automation.task_plant_first_harvest_radish" label="每日萝卜600经验" />
-            <BaseSwitch v-model="localSettings.automation.event_plant" label="活动种植" />
-            <BaseSwitch v-model="localSettings.automation.sell" label="自动卖果实" />
-            <BaseSwitch v-model="localSettings.automation.friend" label="自动好友互动" />
-            <BaseSwitch v-model="localSettings.automation.farm_push" label="推送触发巡田" />
-            <BaseSwitch v-model="localSettings.automation.land_upgrade" label="自动升级土地" />
-            <BaseSwitch v-model="localSettings.automation.fertilizer_gift" label="自动填充化肥" />
-            <BaseSwitch v-model="localSettings.automation.fertilizer_buy" label="自动购买化肥" />
-            <BaseSwitch v-model="localSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
-          </div>
-
-          <div v-if="localSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-2 text-sm dark:bg-blue-900/20">
-            <BaseSwitch v-model="localSettings.automation.friend_steal" label="自动偷菜" />
-            <BaseSwitch v-model="localSettings.automation.friend_help" label="自动帮忙" />
-            <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" />
-            <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验满不帮忙" />
-          </div>
-
-          <div>
-            <BaseSelect
-              v-model="localSettings.automation.fertilizer"
-              label="施肥策略"
-              class="w-full md:w-1/2"
-              :options="fertilizerOptions"
-            />
-          </div>
-
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <BaseSelect
-              v-model="localSettings.automation.fertilizerBuyType"
-              label="购买化肥类型"
-              class="w-full"
-              :options="fertilizerBuyTypeOptions"
-            />
-            <BaseSelect
-              v-model="localSettings.automation.fertilizeLandLevel"
-              label="施肥土地等级"
-              class="w-full"
-              :options="fertilizeLandLevelOptions"
-            />
-          </div>
-
-          <div class="flex flex-wrap items-center gap-4 rounded bg-amber-50 p-3 dark:bg-amber-900/20">
-            <BaseSwitch v-model="localSettings.automation.fertilizer_multi_season" label="多季补肥" />
-            <span class="text-xs text-gray-500 dark:text-gray-400">收获多季作物后自动为仍在生长的地块施肥</span>
-          </div>
-
-          <!-- 秒收取配置 -->
-          <div class="border-t pt-4 space-y-3 dark:border-gray-700">
-            <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
-              秒收取设置
-            </h4>
-            <div class="flex flex-wrap items-center gap-4 rounded bg-green-50 p-3 dark:bg-green-900/20">
-              <BaseSwitch v-model="localSettings.automation.fast_harvest" label="启用秒收取" />
-              <span class="text-xs text-gray-500 dark:text-gray-400">作物成熟前提前发起收获请求，减少被偷概率</span>
+            <div class="flex items-center justify-end pt-1">
+              <BaseButton
+                variant="primary"
+                size="sm"
+                :loading="passwordSaving"
+                @click="handleChangePassword"
+              >
+                修改用户密码
+              </BaseButton>
             </div>
-            <div v-if="localSettings.automation.fast_harvest" class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <BaseInput
-                v-model.number="localSettings.fastHarvestAdvanceMs"
-                label="提前时间 (毫秒)"
-                type="number"
-                min="50"
-                max="1000"
-                placeholder="200"
-              />
-              <div class="flex items-center text-xs text-gray-500 dark:text-gray-400">
-                <span>建议值：200ms，范围 50-1000ms</span>
+          </div>
+
+          <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
+              <div class="i-carbon-notification" />
+              下线提醒
+            </h3>
+          </div>
+
+          <div class="flex-1 p-4 space-y-3">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="flex flex-col gap-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm text-gray-700 font-medium dark:text-gray-300">推送渠道</span>
+                  <BaseButton
+                    variant="text"
+                    size="sm"
+                    :disabled="!currentChannelDocUrl"
+                    @click="openChannelDocs"
+                  >
+                    官网
+                  </BaseButton>
+                </div>
+                <BaseSelect
+                  v-model="localOffline.channel"
+                  :options="channelOptions"
+                />
               </div>
-            </div>
-          </div>
-
-          <!-- 蹲守偷菜配置 -->
-          <div class="border-t pt-4 space-y-3 dark:border-gray-700">
-            <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
-              蹲守偷菜设置
-            </h4>
-            <div class="flex flex-wrap items-center gap-4 rounded bg-purple-50 p-3 dark:bg-purple-900/20">
-              <BaseSwitch v-model="localSettings.automation.stakeout_steal" label="启用蹲守偷菜" />
-              <span class="text-xs text-gray-500 dark:text-gray-400">预判好友作物成熟时间，提前蹲点等待偷取</span>
-            </div>
-            <div v-if="localSettings.automation.stakeout_steal" class="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <BaseInput
-                v-model.number="localSettings.stakeoutSteal.delaySec"
-                label="偷取延迟 (秒)"
-                type="number"
-                min="0"
-                max="60"
-                placeholder="3"
+              <BaseSelect
+                v-model="localOffline.reloginUrlMode"
+                label="重登录链接"
+                :options="reloginUrlModeOptions"
               />
-              <BaseInput
-                v-model.number="localSettings.stakeoutSteal.maxAheadSec"
-                label="最大提前蹲守 (秒)"
-                type="number"
-                min="60"
-                placeholder="14400"
-              />
-              <div class="flex items-center text-xs text-gray-500 dark:text-gray-400">
-                <span>延迟建议 3-5 秒，最大提前建议 4 小时</span>
-              </div>
             </div>
-          </div>
-        </div>
 
-        <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
-          <BaseButton
-            variant="primary"
-            size="sm"
-            :loading="saving"
-            @click="saveAccountSettings"
-          >
-            保存策略与自动控制
-          </BaseButton>
-        </div>
-      </div>
-
-      <div v-else class="card flex flex-col items-center justify-center gap-4 rounded-lg bg-white p-12 text-center shadow dark:bg-gray-800">
-        <div class="rounded-full bg-gray-50 p-4 dark:bg-gray-700/50">
-          <div class="i-carbon-settings-adjust text-4xl text-gray-400 dark:text-gray-500" />
-        </div>
-        <div class="max-w-xs">
-          <h3 class="text-lg text-gray-900 font-medium dark:text-gray-100">
-            需要登录账号
-          </h3>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            请先登录账号以配置策略和自动化选项。
-          </p>
-        </div>
-      </div>
-
-      <div class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
-        <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
-          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
-            <div class="i-carbon-password" />
-            修改用户密码
-          </h3>
-        </div>
-
-        <div class="p-4 space-y-3">
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <BaseInput
-              v-model="passwordForm.old"
-              label="当前密码"
-              type="password"
-              placeholder="当前用户密码"
+              v-model="localOffline.endpoint"
+              label="接口地址"
+              type="text"
+              :disabled="localOffline.channel !== 'webhook'"
             />
+
             <BaseInput
-              v-model="passwordForm.new"
-              label="新密码"
-              type="password"
-              placeholder="至少 4 位"
+              v-model="localOffline.token"
+              label="Token"
+              type="text"
+              placeholder="接收端 token"
             />
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <BaseInput
+                v-model="localOffline.title"
+                label="标题"
+                type="text"
+                placeholder="提醒标题"
+              />
+            </div>
+
             <BaseInput
-              v-model="passwordForm.confirm"
-              label="确认新密码"
-              type="password"
-              placeholder="再次输入新密码"
+              v-model="localOffline.msg"
+              label="内容"
+              type="text"
+              placeholder="提醒内容"
             />
           </div>
 
-          <div class="flex items-center justify-end pt-1">
+          <div class="mt-auto flex justify-end gap-2 border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              :loading="offlineTesting"
+              :disabled="offlineSaving"
+              @click="handleTestOffline"
+            >
+              测试通知
+            </BaseButton>
             <BaseButton
               variant="primary"
               size="sm"
-              :loading="passwordSaving"
-              @click="handleChangePassword"
+              :loading="offlineSaving"
+              :disabled="offlineTesting"
+              @click="handleSaveOffline"
             >
-              修改用户密码
+              保存下线提醒设置
             </BaseButton>
           </div>
         </div>
 
-        <div class="border-b border-t bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
-          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
-            <div class="i-carbon-notification" />
-            下线提醒
-          </h3>
-        </div>
+        <!-- 策略设置标签页 -->
+        <div v-if="activeTab === 'strategy'" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
+          <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
+              <div class="i-fas-cogs" />
+              策略设置
+              <span v-if="currentAccountName" class="ml-2 text-sm text-gray-500 font-normal dark:text-gray-400">
+                ({{ currentAccountName }})
+              </span>
+            </h3>
+          </div>
 
-        <div class="flex-1 p-4 space-y-3">
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div class="flex flex-col gap-1.5">
-              <div class="flex items-center justify-between">
-                <span class="text-sm text-gray-700 font-medium dark:text-gray-300">推送渠道</span>
-                <BaseButton
-                  variant="text"
-                  size="sm"
-                  :disabled="!currentChannelDocUrl"
-                  @click="openChannelDocs"
-                >
-                  官网
-                </BaseButton>
-              </div>
+          <div class="flex-1 p-4 space-y-3">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
               <BaseSelect
-                v-model="localOffline.channel"
-                :options="channelOptions"
+                v-model="localSettings.plantingStrategy"
+                label="种植策略"
+                :options="plantingStrategyOptions"
+              />
+              <BaseSelect
+                v-if="localSettings.plantingStrategy === 'preferred'"
+                v-model="localSettings.preferredSeedId"
+                label="优先种植种子"
+                :options="preferredSeedOptions"
+              />
+              <div v-else class="flex flex-col gap-1.5">
+                <label class="text-sm text-gray-700 font-medium dark:text-gray-300">策略选种预览</label>
+                <div
+                  class="w-full flex items-center justify-between border border-gray-200 rounded-lg bg-gray-50 px-3 py-2 text-gray-500 dark:border-gray-600 dark:bg-gray-800/50 dark:text-gray-400"
+                >
+                  <span class="truncate">{{ strategyPreviewLabel ?? '加载中...' }}</span>
+                  <div class="i-carbon-chevron-down shrink-0 text-lg text-gray-400" />
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <BaseInput
+                v-model.number="localSettings.intervals.farmMin"
+                label="农场巡查最小 (秒)"
+                type="number"
+                min="1"
+              />
+              <BaseInput
+                v-model.number="localSettings.intervals.farmMax"
+                label="农场巡查最大 (秒)"
+                type="number"
+                min="1"
               />
             </div>
-            <BaseSelect
-              v-model="localOffline.reloginUrlMode"
-              label="重登录链接"
-              :options="reloginUrlModeOptions"
-            />
+
+            <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
+              <BaseInput
+                v-model.number="localSettings.intervals.helpMin"
+                label="帮助巡查最小 (秒)"
+                type="number"
+                min="1"
+              />
+              <BaseInput
+                v-model.number="localSettings.intervals.helpMax"
+                label="帮助巡查最大 (秒)"
+                type="number"
+                min="1"
+              />
+            </div>
+
+            <div class="grid grid-cols-2 mt-3 gap-3 md:grid-cols-2">
+              <BaseInput
+                v-model.number="localSettings.intervals.stealMin"
+                label="偷菜巡查最小 (秒)"
+                type="number"
+                min="1"
+              />
+              <BaseInput
+                v-model.number="localSettings.intervals.stealMax"
+                label="偷菜巡查最大 (秒)"
+                type="number"
+                min="1"
+              />
+            </div>
+
+            <div class="mt-4 flex flex-wrap items-center gap-4 border-t pt-3 dark:border-gray-700">
+              <BaseSwitch
+                v-model="localSettings.friendQuietHours.enabled"
+                label="启用静默时段"
+              />
+              <div class="flex items-center gap-2">
+                <BaseInput
+                  v-model="localSettings.friendQuietHours.start"
+                  type="time"
+                  class="w-24"
+                  :disabled="!localSettings.friendQuietHours.enabled"
+                />
+                <span class="text-gray-500">-</span>
+                <BaseInput
+                  v-model="localSettings.friendQuietHours.end"
+                  type="time"
+                  class="w-24"
+                  :disabled="!localSettings.friendQuietHours.enabled"
+                />
+              </div>
+            </div>
+
+            <div class="mt-4 border-t pt-3 space-y-3 dark:border-gray-700">
+              <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
+                种植与偷菜延迟设置
+              </h4>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <BaseSwitch
+                  v-model="localSettings.plantOrderRandom"
+                  label="种植顺序随机"
+                />
+                <BaseInput
+                  v-model.number="localSettings.plantDelaySeconds"
+                  label="种植延迟 (秒)"
+                  type="number"
+                  min="0"
+                />
+                <BaseInput
+                  v-model.number="localSettings.stealDelaySeconds"
+                  label="偷菜延迟 (秒)"
+                  type="number"
+                  min="0"
+                />
+              </div>
+            </div>
           </div>
 
-          <BaseInput
-            v-model="localOffline.endpoint"
-            label="接口地址"
-            type="text"
-            :disabled="localOffline.channel !== 'webhook'"
-          />
-
-          <BaseInput
-            v-model="localOffline.token"
-            label="Token"
-            type="text"
-            placeholder="接收端 token"
-          />
-
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <BaseInput
-              v-model="localOffline.title"
-              label="标题"
-              type="text"
-              placeholder="提醒标题"
-            />
-          </div>
-
-          <BaseInput
-            v-model="localOffline.msg"
-            label="内容"
-            type="text"
-            placeholder="提醒内容"
-          />
-        </div>
-
-        <div class="mt-auto flex justify-end gap-2 border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
-          <BaseButton
-            variant="secondary"
-            size="sm"
-            :loading="offlineTesting"
-            :disabled="offlineSaving"
-            @click="handleTestOffline"
-          >
-            测试通知
-          </BaseButton>
-          <BaseButton
-            variant="primary"
-            size="sm"
-            :loading="offlineSaving"
-            :disabled="offlineTesting"
-            @click="handleSaveOffline"
-          >
-            保存下线提醒设置
-          </BaseButton>
-        </div>
-      </div>
-
-      <!-- 管理设置（仅管理员可见） -->
-      <div v-if="userStore.isAdmin" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
-        <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
-          <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
-            <div class="i-carbon-settings" />
-            管理设置
-          </h3>
-        </div>
-
-        <div class="flex-1 p-4 space-y-3">
-          <div class="rounded bg-blue-50 p-3 text-sm dark:bg-blue-900/20">
-            <p class="text-gray-700 dark:text-gray-300">
-              此设置仅管理员可见。关闭微信配置标签但打开微信扫码登录标签时，所有用户将使用管理员设置的微信配置。
-            </p>
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <BaseSwitch
-              v-model="localAdminWxConfig.showWxConfigTab"
-              label="显示微信配置标签"
-            />
-            <BaseSwitch
-              v-model="localAdminWxConfig.showWxLoginTab"
-              label="显示微信扫码登录标签"
-            />
-          </div>
-
-          <div class="mt-3 border-t pt-3 space-y-3 dark:border-gray-700">
-            <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
-              微信配置（关闭微信配置标签时生效）
-            </h4>
-            <BaseInput
-              v-model="localAdminWxConfig.apiBase"
-              label="后端API地址"
-              type="text"
-              placeholder="http://127.0.0.1:8059/api"
-            />
-            <BaseInput
-              v-model="localAdminWxConfig.apiKey"
-              label="API Key（可选）"
-              type="text"
-              placeholder="第三方API密钥"
-            />
-            <BaseInput
-              v-model="localAdminWxConfig.proxyApiUrl"
-              label="第三方API地址"
-              type="text"
-              placeholder="https://api.aineishe.com/api/wxnc"
-            />
-            <p class="text-xs text-gray-500 dark:text-gray-400">
-              当前使用代理模式，请求将通过后端转发到第三方API。
-            </p>
+          <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :loading="savingStrategy"
+              @click="saveStrategySettings"
+            >
+              保存策略
+            </BaseButton>
           </div>
         </div>
 
-        <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
-          <BaseButton
-            variant="primary"
-            size="sm"
-            :loading="adminWxSaving"
-            @click="handleSaveAdminWxConfig"
-          >
-            保存管理设置
-          </BaseButton>
+        <!-- 自动控制标签页 -->
+        <div v-if="activeTab === 'automation'" class="card h-full flex flex-col rounded-lg bg-white shadow dark:bg-gray-800">
+          <div class="border-b bg-gray-50/50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <h3 class="flex items-center gap-2 text-base text-gray-900 font-bold dark:text-gray-100">
+              <div class="i-fas-toggle-on" />
+              自动控制
+              <span v-if="currentAccountName" class="ml-2 text-sm text-gray-500 font-normal dark:text-gray-400">
+                ({{ currentAccountName }})
+              </span>
+            </h3>
+          </div>
+
+          <div class="flex-1 p-4 space-y-4">
+            <div class="flex items-center gap-4 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
+              <BaseSwitch v-model="automationMasterSwitch" label="总控开关" />
+              <span class="text-xs text-gray-500 dark:text-gray-400">开启后自动打开所有自动控制开关</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+              <BaseSwitch v-model="localSettings.automation.farm" label="自动种植收获" />
+              <BaseSwitch v-model="localSettings.automation.task_plant" label="按照任务种植" />
+              <BaseSwitch v-model="localSettings.automation.task_plant_first_harvest_radish" label="每日萝卜600经验" />
+              <BaseSwitch v-model="localSettings.automation.event_plant" label="活动种植" />
+              <BaseSwitch v-model="localSettings.automation.sell" label="自动卖果实" />
+              <BaseSwitch v-model="localSettings.automation.friend" label="自动好友互动" />
+              <BaseSwitch v-model="localSettings.automation.farm_push" label="推送触发巡田" />
+              <BaseSwitch v-model="localSettings.automation.land_upgrade" label="自动升级土地" />
+              <BaseSwitch v-model="localSettings.automation.fertilizer_gift" label="自动填充化肥" />
+              <BaseSwitch v-model="localSettings.automation.fertilizer_buy" label="自动购买化肥" />
+              <BaseSwitch v-model="localSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
+            </div>
+
+            <div v-if="localSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-2 text-sm dark:bg-blue-900/20">
+              <BaseSwitch v-model="localSettings.automation.friend_steal" label="自动偷菜" />
+              <BaseSwitch v-model="localSettings.automation.friend_help" label="自动帮忙" />
+              <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" />
+              <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验满不帮忙" />
+            </div>
+
+            <div>
+              <BaseSelect
+                v-model="localSettings.automation.fertilizer"
+                label="施肥策略"
+                class="w-full md:w-1/2"
+                :options="fertilizerOptions"
+              />
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <BaseSelect
+                v-model="localSettings.automation.fertilizerBuyType"
+                label="购买化肥类型"
+                class="w-full"
+                :options="fertilizerBuyTypeOptions"
+              />
+              <BaseSelect
+                v-model="localSettings.automation.fertilizeLandLevel"
+                label="施肥土地等级"
+                class="w-full"
+                :options="fertilizeLandLevelOptions"
+              />
+            </div>
+
+            <div class="flex flex-wrap items-center gap-4 rounded bg-amber-50 p-3 dark:bg-amber-900/20">
+              <BaseSwitch v-model="localSettings.automation.fertilizer_multi_season" label="多季补肥" />
+              <span class="text-xs text-gray-500 dark:text-gray-400">收获多季作物后自动为仍在生长的地块施肥</span>
+            </div>
+
+            <!-- 秒收取配置 -->
+            <div class="border-t pt-4 space-y-3 dark:border-gray-700">
+              <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
+                秒收取设置
+              </h4>
+              <div class="flex flex-wrap items-center gap-4 rounded bg-green-50 p-3 dark:bg-green-900/20">
+                <BaseSwitch v-model="localSettings.automation.fast_harvest" label="启用秒收取" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">作物成熟前提前发起收获请求，减少被偷概率</span>
+              </div>
+              <div v-if="localSettings.automation.fast_harvest" class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <BaseInput
+                  v-model.number="localSettings.fastHarvestAdvanceMs"
+                  label="提前时间 (毫秒)"
+                  type="number"
+                  min="50"
+                  max="1000"
+                  placeholder="200"
+                />
+                <div class="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                  <span>建议值：200ms，范围 50-1000ms</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 蹲守偷菜配置 -->
+            <div class="border-t pt-4 space-y-3 dark:border-gray-700">
+              <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
+                蹲守偷菜设置
+              </h4>
+              <div class="flex flex-wrap items-center gap-4 rounded bg-purple-50 p-3 dark:bg-purple-900/20">
+                <BaseSwitch v-model="localSettings.automation.stakeout_steal" label="启用蹲守偷菜" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">预判好友作物成熟时间，提前蹲点等待偷取</span>
+              </div>
+              <div v-if="localSettings.automation.stakeout_steal" class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <BaseInput
+                  v-model.number="localSettings.stakeoutSteal.delaySec"
+                  label="偷取延迟 (秒)"
+                  type="number"
+                  min="0"
+                  max="60"
+                  placeholder="3"
+                />
+                <BaseInput
+                  v-model.number="localSettings.stakeoutSteal.maxAheadSec"
+                  label="最大提前蹲守 (秒)"
+                  type="number"
+                  min="60"
+                  placeholder="14400"
+                />
+                <div class="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                  <span>延迟建议 3-5 秒，最大提前建议 4 小时</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="border-t pt-4 space-y-3 dark:border-gray-700">
+              <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
+                GUID索引设置
+              </h4>
+              <div class="flex flex-wrap items-center gap-4 rounded bg-cyan-50 p-3 dark:bg-cyan-900/20">
+                <BaseSwitch v-model="localSettings.automation.use_visitor_gids" label="从访客列表获取GUID" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">从最近访客列表保存GUID并用于好友列表</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-4 rounded bg-cyan-50 p-3 dark:bg-cyan-900/20">
+                <BaseSwitch v-model="localSettings.automation.use_guid_range" label="自动索引GUID范围" />
+                <span class="text-xs text-gray-500 dark:text-gray-400">自动索引指定范围内的GUID（实验功能）</span>
+              </div>
+              <div v-if="localSettings.automation.use_guid_range" class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <BaseInput
+                  v-model.number="localSettings.automation.guid_range_start"
+                  label="GUID范围起始"
+                  type="number"
+                  min="100000000"
+                  max="999999999"
+                  placeholder="100000000"
+                />
+                <BaseInput
+                  v-model.number="localSettings.automation.guid_range_end"
+                  label="GUID范围结束"
+                  type="number"
+                  min="100000000"
+                  max="999999999"
+                  placeholder="119000000"
+                />
+                <BaseInput
+                  v-model.number="localSettings.automation.guid_index_current"
+                  label="当前索引进度"
+                  type="number"
+                  min="100000000"
+                  max="999999999"
+                  placeholder="100000000"
+                />
+                <BaseInput
+                  v-model.number="localSettings.automation.guid_index_interval"
+                  label="索引间隔 (秒)"
+                  type="number"
+                  min="1"
+                  max="10"
+                  placeholder="3"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-auto flex justify-end border-t bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/50">
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :loading="savingAutomation"
+              @click="saveAutomationSettings"
+            >
+              保存自动控制
+            </BaseButton>
+          </div>
         </div>
       </div>
     </div>

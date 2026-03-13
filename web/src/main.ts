@@ -1,6 +1,5 @@
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
-import { useAppStore } from '@/stores/app'
 import { useToastStore } from '@/stores/toast'
 import App from './App.vue'
 import router from './router'
@@ -41,9 +40,5 @@ window.onerror = (message, _source, _lineno, _colno, error) => {
     return
   toast.error(`系统错误: ${message}`)
 }
-
-// Apply theme from localStorage immediately, then sync from server if authed
-const appStore = useAppStore()
-appStore.fetchTheme()
 
 app.mount('#app')

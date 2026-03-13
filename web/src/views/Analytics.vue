@@ -317,7 +317,7 @@ function formatGrowTime(seconds: any) {
         @click="activeTab = 'crops'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">🌱</span>
+          <div class="i-carbon-sprout h-6 w-6 flex items-center justify-center text-lg" />
           <span>全部作物信息</span>
           <span v-if="list.length" class="ml-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700 dark:bg-green-900/50 dark:text-green-300">
             {{ list.length }}
@@ -332,7 +332,7 @@ function formatGrowTime(seconds: any) {
         @click="activeTab = 'blacklist'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">🚫</span>
+          <div class="i-carbon-subtract-alt h-6 w-6 flex items-center justify-center text-lg" />
           <span>黑名单</span>
           <span v-if="blacklist.length" class="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 dark:bg-red-900/50 dark:text-red-300">
             {{ blacklist.length }}
@@ -347,7 +347,7 @@ function formatGrowTime(seconds: any) {
         @click="activeTab = 'strategy'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">📊</span>
+          <div class="i-carbon-chart-line h-6 w-6 flex items-center justify-center text-lg" />
           <span>策略推荐</span>
         </div>
       </button>
@@ -583,7 +583,7 @@ function formatGrowTime(seconds: any) {
         <div class="border-b border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-700/50">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
-              <div class="i-carbon-list-blocked text-xl text-red-500" />
+              <div class="i-fas-ban text-xl text-red-500" />
               <div>
                 <h3 class="text-gray-700 font-semibold dark:text-gray-300">
                   偷菜黑名单
@@ -600,7 +600,7 @@ function formatGrowTime(seconds: any) {
                 @click="handleAddAllToBlacklist"
               >
                 <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg" />
-                <div v-else class="i-carbon-add-all" />
+                <div v-else class="i-fas-plus" />
                 一键全部加入黑名单
               </button>
               <button

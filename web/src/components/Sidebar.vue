@@ -2,7 +2,7 @@
 import { useDateFormat, useIntervalFn, useNow } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import api from '@/api'
 import AccountModal from '@/components/AccountModal.vue'
 import RemarkModal from '@/components/RemarkModal.vue'
@@ -10,21 +10,17 @@ import ThemeToggle from '@/components/ThemeToggle.vue'
 
 import { menuRoutes } from '@/router/menu'
 import { getPlatformClass, getPlatformLabel, useAccountStore } from '@/stores/account'
-import { useAppStore } from '@/stores/app'
 import { useStatusStore } from '@/stores/status'
 import { useToastStore } from '@/stores/toast'
 import { useUserStore } from '@/stores/user'
 
 const accountStore = useAccountStore()
 const statusStore = useStatusStore()
-const appStore = useAppStore()
 const toastStore = useToastStore()
 const userStore = useUserStore()
-const route = useRoute()
 const router = useRouter()
 const { accounts, currentAccount } = storeToRefs(accountStore)
 const { status, realtimeConnected } = storeToRefs(statusStore)
-const { sidebarOpen } = storeToRefs(appStore)
 
 const showAccountDropdown = ref(false)
 const showAccountModal = ref(false)
@@ -202,7 +198,7 @@ const connectionStatus = computed(() => {
 const navItems = computed(() => {
   const isAdmin = userStore.isAdmin
   return menuRoutes
-    .filter(item => !item.adminOnly || isAdmin)
+    .filter(item => item.path !== 'accounts' && (!item.adminOnly || isAdmin))
     .map(item => ({
       path: item.path ? `/${item.path}` : '/',
       label: item.label,
@@ -216,15 +212,6 @@ function selectAccount(acc: any) {
 }
 
 const version = __APP_VERSION__
-
-watch(
-  () => route.path,
-  () => {
-    // Close sidebar on route change (mobile only)
-    if (window.innerWidth < 1024)
-      appStore.closeSidebar()
-  },
-)
 
 // 用户相关
 const showUserDropdown = ref(false)
@@ -276,8 +263,7 @@ async function handleRenew() {
 
 <template>
   <aside
-    class="fixed inset-y-0 left-0 z-50 h-full w-64 flex flex-col border-r border-gray-200/50 transition-transform duration-300 lg:static lg:translate-x-0 dark:border-gray-700/50"
-    :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+    class="h-full w-64 flex flex-col border-r border-gray-200/50 dark:border-gray-700/50"
     :style="{ background: 'var(--theme-bg)', color: 'var(--theme-text)' }"
   >
     <!-- Brand -->
@@ -288,13 +274,6 @@ async function handleRenew() {
           QQ农场智能助手
         </span>
       </div>
-      <!-- Mobile Close Button -->
-      <button
-        class="rounded-lg p-1 text-gray-500 lg:hidden hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
-        @click="appStore.closeSidebar"
-      >
-        <div class="i-carbon-close text-xl" />
-      </button>
     </div>
 
     <!-- User Info -->
@@ -489,15 +468,6 @@ async function handleRenew() {
               <div class="i-carbon-add" />
               <span>添加账号</span>
             </button>
-            <router-link
-              to="/accounts"
-              class="w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-gray-100/50 dark:hover:bg-gray-700/50"
-              :style="{ color: 'var(--theme-primary)' }"
-              @click="showAccountDropdown = false"
-            >
-              <div class="i-carbon-add-alt" />
-              <span>管理账号</span>
-            </router-link>
           </div>
         </div>
       </div>

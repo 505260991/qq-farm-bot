@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import type { ApiResult } from '@/api/result'
 import { useIntervalFn } from '@vueuse/core'
 import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api'
+import { getErrorMessage } from '@/api/error'
+import { unwrapOk } from '@/api/result'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import { useAccountStore } from '@/stores/account'
+import { useToastStore } from '@/stores/toast'
 import { useWxLoginStore } from '@/stores/wx-login'
 
 const props = defineProps<{
@@ -15,6 +19,7 @@ const emit = defineEmits(['close', 'saved'])
 
 const wxLoginStore = useWxLoginStore()
 const accountStore = useAccountStore()
+const toast = useToastStore()
 
 const activeTab = ref<'login' | 'settings'>('login')
 const accountName = ref('')
@@ -28,9 +33,8 @@ const adminWxConfig = ref({
 async function loadAdminWxConfigPublic() {
   try {
     const { data } = await api.get('/api/wx-config/public')
-    if (data?.ok && data?.data) {
-      adminWxConfig.value = { ...adminWxConfig.value, ...data.data }
-    }
+    const cfg = unwrapOk<Record<string, any>>(data as ApiResult<Record<string, any>>, '加载管理员微信配置失败')
+    adminWxConfig.value = { ...adminWxConfig.value, ...cfg }
   }
   catch (e) {
     console.error('加载管理员微信配置失败:', e)
@@ -76,18 +80,37 @@ async function handleAutoAddAccount(wxid: string, nickname?: string) {
       emit('saved')
       close()
     }
+    else {
+      const msg = wxLoginStore.errorMessage || '获取农场 Code 失败'
+      wxLoginStore.status = 'error'
+      wxLoginStore.statusMessage = '自动添加账号失败'
+      wxLoginStore.errorMessage = msg
+      toast.error(`自动添加账号失败: ${msg}`)
+    }
   }
   catch (e) {
-    console.error('自动添加账号失败:', e)
+    const msg = getErrorMessage(e, '自动添加账号失败')
+    wxLoginStore.status = 'error'
+    wxLoginStore.statusMessage = '自动添加账号失败'
+    wxLoginStore.errorMessage = msg
+    toast.error(`自动添加账号失败: ${msg}`)
   }
 }
 
 // 获取二维码
 async function loadQRCode() {
   wxLoginStore.resetState()
-  const success = await wxLoginStore.getQRCode()
-  if (success) {
-    startCheck()
+  try {
+    const success = await wxLoginStore.getQRCode()
+    if (success) {
+      startCheck()
+    }
+    else {
+      toast.error(`获取二维码失败: ${wxLoginStore.errorMessage || '请求失败'}`)
+    }
+  }
+  catch (e) {
+    toast.error(`获取二维码失败: ${getErrorMessage(e, '请求失败')}`)
   }
 }
 

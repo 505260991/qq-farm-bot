@@ -656,6 +656,15 @@ async function handleApiCall(msg) {
             case 'getSchedulers':
                 result = getSchedulerRegistrySnapshot();
                 break;
+            case 'addManualFriend':
+                result = await require('../services/friend').addManualFriend(args[0]);
+                break;
+            case 'addManualFriends':
+                result = await require('../services/friend').addManualFriends(args[0]);
+                break;
+            case 'addManualFriendsByHex':
+                result = await require('../services/friend').addManualFriendsByHex(args[0]);
+                break;
             default:
                 error = 'Unknown method';
         }
@@ -667,7 +676,6 @@ async function handleApiCall(msg) {
 }
 
 async function getDailyGiftOverview() {
-    const auto = getAutomation() || {};
     const task = getTaskDailyStateLikeApp
         ? await getTaskDailyStateLikeApp()
         : (getTaskClaimDailyState ? getTaskClaimDailyState() : { doneToday: false, lastClaimAt: 0 });

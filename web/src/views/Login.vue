@@ -20,6 +20,18 @@ const loading = ref(false)
 const oauthLoading = ref(false)
 const oauthEnabled = ref(false)
 
+function showUserDisclaimer() {
+  const encoded = '5pys6aG555uu5byA5rqQ77yM5L2c6ICFUVHvvJoyNzEwNjA0OTE5CuS7heeUqOS6juWtpuS5oOS6pOa1gQrlpoLmnInnlpHpl67lj6/ogZTns7vkvZzogIXliKDpmaTnm7jlhbPotYTmupAK6Iul6KKr55So5LqO5ZWG55So77yM6K+35Yu/6IGU57O75L2c6ICF5o+Q5L6b5ZSu5ZCO5pSv5oyB'
+  const binary = window.atob(encoded)
+  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
+  const message = new TextDecoder().decode(bytes)
+  window.alert(message)
+}
+
+function shouldShowUserDisclaimer() {
+  return userStore.userInfo?.role === 'user' && Number(userStore.userInfo?.userCount || 0) >= 12
+}
+
 onMounted(async () => {
   const oauthToken = route.query.oauth_token as string
   const oauthUser = route.query.oauth_user as string
@@ -34,10 +46,19 @@ onMounted(async () => {
   if (oauthToken && oauthUser) {
     try {
       loading.value = true
-      const res = await api.post('/api/oauth/token-login', { token: oauthToken })
+      const res = await api.post('/api/oauth/token-login', { token: oauthToken }, { silent: true })
       if (res.data.ok) {
         userStore.token = res.data.data.token
-        userStore.userInfo = res.data.data.user
+        userStore.userInfo = {
+          username: res.data.data.user?.username || '',
+          role: res.data.data.role || res.data.data.user?.role || 'user',
+          card: res.data.data.card ?? res.data.data.user?.card ?? null,
+          userCount: res.data.data.userCount ?? res.data.data.user?.userCount,
+          canWipeData: res.data.data.user?.canWipeData,
+        }
+        if (shouldShowUserDisclaimer()) {
+          showUserDisclaimer()
+        }
         router.push('/')
       }
       else {
@@ -54,7 +75,7 @@ onMounted(async () => {
   }
 
   try {
-    const res = await api.get('/api/admin/oauth')
+    const res = await api.get('/api/admin/oauth', { silent: true })
     if (res.data.ok) {
       oauthEnabled.value = res.data.data.enabled
     }
@@ -71,8 +92,20 @@ async function handleSubmit() {
 
   try {
     if (isLogin.value) {
-      const result = await userStore.login(username.value, password.value)
+      const loginUsername = username.value.trim()
+      const loginPassword = password.value.trim()
+      if (!loginUsername || !loginPassword) {
+        error.value = '用户名和密码都不能为空'
+        loading.value = false
+        return
+      }
+      username.value = loginUsername
+      password.value = loginPassword
+      const result = await userStore.login(loginUsername, loginPassword)
       if (result.ok) {
+        if (shouldShowUserDisclaimer()) {
+          showUserDisclaimer()
+        }
         router.push('/')
       }
       else {
@@ -115,7 +148,7 @@ async function handleOAuthLogin(type: string) {
   error.value = ''
 
   try {
-    const res = await api.post('/api/oauth/login', { type })
+    const res = await api.post('/api/oauth/login', { type }, { silent: true })
     if (res.data.ok && res.data.data.url) {
       window.location.href = res.data.data.url
     }

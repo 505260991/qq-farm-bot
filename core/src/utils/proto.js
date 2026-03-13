@@ -128,6 +128,8 @@ async function loadProto() {
     types.GetApplicationsReply = root.lookupType('gamepb.friendpb.GetApplicationsReply');
     types.AcceptFriendsRequest = root.lookupType('gamepb.friendpb.AcceptFriendsRequest');
     types.AcceptFriendsReply = root.lookupType('gamepb.friendpb.AcceptFriendsReply');
+    types.GetGameFriendsRequest = root.lookupType('gamepb.friendpb.GetGameFriendsRequest');
+    types.GetGameFriendsReply = root.lookupType('gamepb.friendpb.GetGameFriendsReply');
 
     // 访问
     types.VisitEnterRequest = root.lookupType('gamepb.visitpb.EnterRequest');

@@ -1,9 +1,18 @@
+import type { AxiosError, AxiosRequestConfig } from 'axios'
 import { useStorage } from '@vueuse/core'
 import axios from 'axios'
 import { useToastStore } from '@/stores/toast'
 
 const tokenRef = useStorage('admin_token', '')
 const accountIdRef = useStorage('current_account_id', '')
+
+export interface ApiRequestConfig extends AxiosRequestConfig {
+  /**
+   * When true, suppress global toast / redirect handling.
+   * Use for pages that handle errors locally (e.g. login forms).
+   */
+  silent?: boolean
+}
 
 const api = axios.create({
   baseURL: '/',
@@ -27,6 +36,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use((response) => {
   return response
 }, (error) => {
+  const cfg = (error as AxiosError).config as ApiRequestConfig | undefined
+  if (cfg?.silent)
+    return Promise.reject(error)
+
   const toast = useToastStore()
 
   if (error.response) {

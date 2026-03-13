@@ -1,7 +1,9 @@
+import type { ApiResult } from '@/api/result'
 import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import api from '@/api'
+import { unwrapOk } from '@/api/result'
 
 export interface UserCard {
   code: string
@@ -17,6 +19,8 @@ export interface User {
   username: string
   role: 'admin' | 'user'
   card: UserCard | null
+  userCount?: number
+  canWipeData?: boolean
 }
 
 export interface Card {
@@ -29,6 +33,14 @@ export interface Card {
   usedBy: string | null
   usedAt: number | null
   createdAt: number
+}
+
+interface LoginPayload {
+  token: string
+  role?: User['role']
+  card?: UserCard | null
+  userCount?: number
+  user?: Partial<User>
 }
 
 export const useUserStore = defineStore('user', () => {
@@ -58,21 +70,32 @@ export const useUserStore = defineStore('user', () => {
     return date.toLocaleString('zh-CN')
   })
 
-  async function login(username: string, password: string) {
-    const res = await api.post('/api/login', { username, password })
-    if (res.data.ok) {
-      token.value = res.data.data.token
-      userInfo.value = res.data.data.user
-      // 登录成功后加载微信配置
-      const { useWxLoginStore } = await import('./wx-login')
-      const wxLoginStore = useWxLoginStore()
-      await wxLoginStore.loadConfigFromServer()
+  function normalizeLoginUser(payload: LoginPayload): User {
+    const role = payload.role || payload.user?.role || 'user'
+    const card = payload.card ?? payload.user?.card ?? null
+    return {
+      username: payload.user?.username || '',
+      role,
+      card,
+      userCount: payload.userCount ?? payload.user?.userCount,
+      canWipeData: payload.user?.canWipeData,
     }
+  }
+
+  async function login(username: string, password: string) {
+    const res = await api.post('/api/login', { username, password }, { silent: true })
+    const data = unwrapOk<LoginPayload>(res.data as ApiResult<LoginPayload>, '登录失败')
+    token.value = data.token
+    userInfo.value = normalizeLoginUser(data)
+    // 登录成功后加载微信配置
+    const { useWxLoginStore } = await import('./wx-login')
+    const wxLoginStore = useWxLoginStore()
+    await wxLoginStore.loadConfigFromServer()
     return res.data
   }
 
   async function register(username: string, password: string, cardCode: string) {
-    const res = await api.post('/api/register', { username, password, cardCode })
+    const res = await api.post('/api/register', { username, password, cardCode }, { silent: true })
     return res.data
   }
 
@@ -89,9 +112,8 @@ export const useUserStore = defineStore('user', () => {
   async function fetchUserInfo() {
     try {
       const res = await api.get('/api/user/me')
-      if (res.data.ok) {
-        userInfo.value = res.data.data
-      }
+      const data = unwrapOk<User>(res.data as ApiResult<User>, '获取用户信息失败')
+      userInfo.value = data
       return res.data
     }
     catch {
@@ -116,11 +138,6 @@ export const useUserStore = defineStore('user', () => {
   // 管理员功能
   async function getAllUsers() {
     const res = await api.get('/api/admin/users')
-    return res.data
-  }
-
-  async function getAllUsersWithPassword() {
-    const res = await api.get('/api/admin/users-with-password')
     return res.data
   }
 
@@ -180,7 +197,6 @@ export const useUserStore = defineStore('user', () => {
     renew,
     changePassword,
     getAllUsers,
-    getAllUsersWithPassword,
     updateUser,
     deleteUser,
     renewUser,

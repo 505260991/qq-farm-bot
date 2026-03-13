@@ -1,6 +1,8 @@
+import type { ApiResult } from '@/api/result'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '@/api'
+import { getApiErrorMessage, isApiOk, unwrapOk } from '@/api/result'
 
 export const useFriendStore = defineStore('friend', () => {
   const friends = ref<any[]>([])
@@ -72,9 +74,7 @@ export const useFriendStore = defineStore('friend', () => {
       const res = await api.get('/api/friends', {
         headers: { 'x-account-id': accountId },
       })
-      if (res.data.ok) {
-        friends.value = res.data.data || []
-      }
+      friends.value = unwrapOk<any[]>(res.data as ApiResult<any[]>, '加载好友列表失败') || []
     }
     finally {
       loading.value = false
@@ -88,9 +88,7 @@ export const useFriendStore = defineStore('friend', () => {
       const res = await api.get('/api/friend-blacklist', {
         headers: { 'x-account-id': accountId },
       })
-      if (res.data.ok) {
-        blacklist.value = res.data.data || []
-      }
+      blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '加载黑名单失败') || []
     }
     catch { /* ignore */ }
   }
@@ -101,9 +99,7 @@ export const useFriendStore = defineStore('friend', () => {
     const res = await api.post('/api/friend-blacklist/toggle', { gid }, {
       headers: { 'x-account-id': accountId },
     })
-    if (res.data.ok) {
-      blacklist.value = res.data.data || []
-    }
+    blacklist.value = unwrapOk<number[]>(res.data as ApiResult<number[]>, '更新黑名单失败') || []
   }
 
   async function fetchInteractRecords(accountId: string) {
@@ -117,11 +113,11 @@ export const useFriendStore = defineStore('friend', () => {
       const res = await api.get('/api/interact-records', {
         headers: { 'x-account-id': accountId },
       })
-      if (res.data.ok) {
+      if (isApiOk<any[]>(res.data)) {
         interactRecords.value = Array.isArray(res.data.data) ? res.data.data : []
       }
       else {
-        interactError.value = res.data.error || '加载访客记录失败'
+        interactError.value = getApiErrorMessage(res.data, '加载访客记录失败')
       }
     }
     catch (error: any) {
@@ -140,12 +136,11 @@ export const useFriendStore = defineStore('friend', () => {
       const res = await api.get(`/api/friend/${friendId}/lands`, {
         headers: { 'x-account-id': accountId },
       })
-      if (res.data.ok) {
-        const lands = res.data.data.lands || []
-        const summary = res.data.data.summary || null
-        friendLands.value[friendId] = lands
-        syncFriendPlantSummary(friendId, lands, summary)
-      }
+      const data = unwrapOk<{ lands?: any[], summary?: any }>(res.data as ApiResult<{ lands?: any[], summary?: any }>, '加载好友土地失败')
+      const lands = data?.lands || []
+      const summary = data?.summary || null
+      friendLands.value[friendId] = lands
+      syncFriendPlantSummary(friendId, lands, summary)
     }
     finally {
       friendLandsLoading.value[friendId] = false

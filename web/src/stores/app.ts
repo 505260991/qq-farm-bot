@@ -7,7 +7,6 @@ const THEME_KEY = 'ui_theme'
 export type Theme = 'light-blue' | 'light-green' | 'light-pink' | 'dark-blue' | 'dark-purple' | 'dark-teal' | 'dark-orange' | 'dark-red'
 
 export const useAppStore = defineStore('app', () => {
-  const sidebarOpen = ref(false)
   const currentTheme = ref<Theme>((localStorage.getItem(THEME_KEY) as Theme) || 'light-pink')
   const showThemePanel = ref(false)
 
@@ -63,7 +62,7 @@ export const useAppStore = defineStore('app', () => {
       primary: '#22c55e',
       secondary: '#16a34a',
       gradient: 'linear-gradient(135deg, #4ade80 0%, #22c55e 100%)',
-      icon: 'i-carbon-leaf',
+      icon: 'i-fas-leaf',
     },
     // 紫罗兰主题
     'dark-purple': {
@@ -74,7 +73,7 @@ export const useAppStore = defineStore('app', () => {
       primary: '#a855f7',
       secondary: '#9333ea',
       gradient: 'linear-gradient(135deg, #c084fc 0%, #a855f7 100%)',
-      icon: 'i-carbon-crown',
+      icon: 'i-fas-crown',
     },
     // 橙色暖阳主题
     'dark-orange': {
@@ -109,18 +108,6 @@ export const useAppStore = defineStore('app', () => {
       gradient: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
       icon: 'i-carbon-close-filled',
     },
-  }
-
-  function toggleSidebar() {
-    sidebarOpen.value = !sidebarOpen.value
-  }
-
-  function closeSidebar() {
-    sidebarOpen.value = false
-  }
-
-  function openSidebar() {
-    sidebarOpen.value = true
   }
 
   async function fetchTheme() {
@@ -194,7 +181,6 @@ export const useAppStore = defineStore('app', () => {
   })
 
   return {
-    sidebarOpen,
     isDark,
     currentTheme,
     showThemePanel,
@@ -202,9 +188,6 @@ export const useAppStore = defineStore('app', () => {
     applyTheme,
     toggleThemePanel,
     toggleDark,
-    toggleSidebar,
-    closeSidebar,
-    openSidebar,
     fetchTheme,
   }
 })

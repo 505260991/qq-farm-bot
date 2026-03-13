@@ -103,6 +103,9 @@ function createDataProvider(options) {
         sellItems: (accountRef, items) => callWorkerApi(resolveAccountRefId(accountRef), 'sellItems', items),
         getDailyGifts: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDailyGiftOverview'),
         getSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getSeeds'),
+        addManualFriend: (accountRef, gid) => callWorkerApi(resolveAccountRefId(accountRef), 'addManualFriend', gid),
+        addManualFriends: (accountRef, gids) => callWorkerApi(resolveAccountRefId(accountRef), 'addManualFriends', gids),
+        addManualFriendsByHex: (accountRef, hex) => callWorkerApi(resolveAccountRefId(accountRef), 'addManualFriendsByHex', hex),
 
         setAutomation: async (accountRef, key, value) => {
             const accountId = resolveAccountRefId(accountRef);

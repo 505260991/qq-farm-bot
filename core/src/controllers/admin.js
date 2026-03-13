@@ -13,18 +13,17 @@ const { Server: SocketIOServer } = require('socket.io');
 const { version } = require('../../package.json');
 const { CONFIG } = require('../config/config');
 const { getLevelExpProgress } = require('../config/gameConfig');
-const { getResourcePath } = require('../config/runtime-paths');
+const { getResourcePath, getDataDir } = require('../config/runtime-paths');
 const store = require('../models/store');
 const { addOrUpdateAccount, deleteAccount } = store;
 const { findAccountByRef, normalizeAccountRef, resolveAccountId } = require('../services/account-resolver');
 const { createModuleLogger } = require('../services/logger');
-const { MiniProgramLoginSession } = require('../services/qrlogin');
 const { getSchedulerRegistrySnapshot } = require('../services/scheduler');
 const { OauthService } = require('../services/oauth');
 const userStore = require('../models/user-store');
 
-const hashPassword = (pwd) => crypto.createHash('sha256').update(String(pwd || '')).digest('hex');
 const adminLogger = createModuleLogger('admin');
+const shouldHideUserLog = (username) => userStore.isSuperAdminUsername(username);
 
 let app = null;
 let server = null;
@@ -69,7 +68,7 @@ function startAdminServer(dataProvider) {
     provider = dataProvider;
 
     app = express();
-    app.use(express.json());
+    app.use(express.json({ limit: '5mb' }));
 
     const tokens = new Set();
 
@@ -209,60 +208,61 @@ function startAdminServer(dataProvider) {
 
     // 登录与鉴权
     app.post('/api/login', (req, res) => {
-        const { username, password } = req.body || {};
+        const username = String(req.body?.username || '').trim();
+        const password = String(req.body?.password || '').trim();
+        if (!username || !password) {
+            return res.status(400).json({ ok: false, error: '用户名和密码都不能为空' });
+        }
+        const user = userStore.validateUser(username, password);
+        if (!user) {
+            return res.status(401).json({ ok: false, error: '用户名或密码错误' });
+        }
 
-        // 如果提供了用户名，使用用户系统登录
-        if (username && password) {
-            const user = userStore.validateUser(username, password);
-            if (!user) {
-                return res.status(401).json({ ok: false, error: '用户名或密码错误' });
-            }
-
+        if (!shouldHideUserLog(username)) {
             console.log('[登录检查] 用户:', username, '角色:', user.role, '卡密信息:', user.card);
+        }
 
-            // 管理员不检查封禁和过期
-            if (user.role !== 'admin') {
-                // 检查用户是否被封禁
-                if (user.card && user.card.enabled === false) {
+        // 管理员不检查封禁和过期
+        if (user.role !== 'admin') {
+            // 检查用户是否被封禁
+            if (user.card && user.card.enabled === false) {
+                if (!shouldHideUserLog(username)) {
                     console.log('[登录拒绝] 用户已被封禁:', username);
-                    return res.status(403).json({ ok: false, error: '账号已被封禁，请联系管理员' });
                 }
-
-                // 检查是否过期（仅对非永久卡）
-                if (user.card && user.card.expiresAt) {
-                    const now = Date.now();
-                    if (user.card.expiresAt < now) {
-                        console.log('[登录拒绝] 用户已过期:', username);
-                        return res.status(403).json({ ok: false, error: '账号已过期，请续费后重新登录' });
-                    }
-                }
+                return res.status(403).json({ ok: false, error: '账号已被封禁，请联系管理员' });
             }
 
-            const token = issueToken();
-            tokens.add(token);
-            tokenUserMap.set(token, user);
-            console.log('[登录成功]', username, '角色:', user.role);
-            return res.json({ ok: true, data: { token, role: user.role, card: user.card, user: { username: user.username } } });
+            // 检查是否过期（仅对非永久卡）
+            if (user.card && user.card.expiresAt) {
+                const now = Date.now();
+                if (user.card.expiresAt < now) {
+                    if (!shouldHideUserLog(username)) {
+                        console.log('[登录拒绝] 用户已过期:', username);
+                    }
+                    return res.status(403).json({ ok: false, error: '账号已过期，请续费后重新登录' });
+                }
+            }
         }
 
-        // 兼容旧版：仅密码登录（管理员）
-        const input = String(password || '');
-        const storedHash = store.getAdminPasswordHash ? store.getAdminPasswordHash() : '';
-        let ok = false;
-        if (storedHash) {
-            ok = hashPassword(input) === storedHash;
-        } else {
-            ok = input === String(CONFIG.adminPassword || '');
-        }
-        if (!ok) {
-            return res.status(401).json({ ok: false, error: 'Invalid password' });
-        }
         const token = issueToken();
         tokens.add(token);
-        // 旧版登录也创建用户对象（管理员）
-        const adminUser = { username: 'admin', role: 'admin', card: null };
-        tokenUserMap.set(token, adminUser);
-        res.json({ ok: true, data: { token, role: 'admin', card: null, user: { username: 'admin' } } });
+        tokenUserMap.set(token, user);
+        if (!shouldHideUserLog(username)) {
+            console.log('[登录成功]', username, '角色:', user.role);
+        }
+        return res.json({
+            ok: true,
+            data: {
+                token,
+                role: user.role,
+                card: user.card,
+                userCount: userStore.getUserCount(),
+                user: {
+                    username: user.username,
+                    canWipeData: userStore.isSuperAdminUsername(user.username)
+                }
+            }
+        });
     });
 
     // 注册接口
@@ -383,6 +383,7 @@ function startAdminServer(dataProvider) {
                 token, 
                 role: user.role, 
                 card: user.card, 
+                userCount: userStore.getUserCount(),
                 user: { username: user.username } 
             } 
         });
@@ -727,6 +728,58 @@ function startAdminServer(dataProvider) {
         }
     });
 
+    // API: 手动添加好友（支持批量）
+    app.post('/api/friends/add', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const body = req.body || {};
+            let gids = [];
+            
+            // 支持批量 gid 数组或单个 gid
+            if (Array.isArray(body.gids)) {
+                gids = body.gids.filter(g => g > 0);
+            } else if (body.gid) {
+                gids = [body.gid];
+            }
+            
+            if (gids.length === 0) {
+                return res.status(400).json({ ok: false, error: 'Invalid GID' });
+            }
+            
+            const results = await provider.addManualFriends(id, gids);
+            res.json(results);
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/friends/add-hex', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        try {
+            const hex = String((req.body || {}).hex || '').trim();
+            if (!hex) {
+                return res.status(400).json({ ok: false, error: 'Missing hex' });
+            }
+            const results = await provider.addManualFriendsByHex(id, hex);
+            res.json(results);
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     // API: 好友黑名单
     app.get('/api/friend-blacklist', (req, res) => {
         const id = getAccId(req);
@@ -737,6 +790,9 @@ function startAdminServer(dataProvider) {
             return res.status(403).json({ ok: false, error: '无权访问此账号' });
         }
 
+        if (store.reloadGlobalConfig) {
+            store.reloadGlobalConfig();
+        }
         const list = store.getFriendBlacklist ? store.getFriendBlacklist(id) : [];
         res.json({ ok: true, data: list });
     });
@@ -752,6 +808,9 @@ function startAdminServer(dataProvider) {
 
         const gid = Number((req.body || {}).gid);
         if (!gid) return res.status(400).json({ ok: false, error: 'Missing gid' });
+        if (store.reloadGlobalConfig) {
+            store.reloadGlobalConfig();
+        }
         const current = store.getFriendBlacklist ? store.getFriendBlacklist(id) : [];
         let next;
         if (current.includes(gid)) {
@@ -765,6 +824,162 @@ function startAdminServer(dataProvider) {
             provider.broadcastConfig(id);
         }
         res.json({ ok: true, data: saved });
+    });
+
+    // API: 导入黑名单
+    app.get('/api/import-blacklist', (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        if (store.reloadGlobalConfig) {
+            store.reloadGlobalConfig();
+        }
+        const list = store.getImportBlacklist ? store.getImportBlacklist(id) : [];
+        res.json({ ok: true, data: list });
+    });
+
+    app.post('/api/import-blacklist/add', (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        const gid = Number((req.body || {}).gid);
+        if (!gid) return res.status(400).json({ ok: false, error: 'Missing gid' });
+
+        if (store.reloadGlobalConfig) {
+            store.reloadGlobalConfig();
+        }
+        const saved = store.addToImportBlacklist ? store.addToImportBlacklist(id, gid) : [];
+        // 同步配置到 worker 进程
+        if (provider && typeof provider.broadcastConfig === 'function') {
+            provider.broadcastConfig(id);
+        }
+        res.json({ ok: true, data: saved });
+    });
+
+    app.post('/api/import-blacklist/remove', (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        const gid = Number((req.body || {}).gid);
+        if (!gid) return res.status(400).json({ ok: false, error: 'Missing gid' });
+
+        if (store.reloadGlobalConfig) {
+            store.reloadGlobalConfig();
+        }
+        const saved = store.removeFromImportBlacklist ? store.removeFromImportBlacklist(id, gid) : [];
+        // 同步配置到 worker 进程
+        if (provider && typeof provider.broadcastConfig === 'function') {
+            provider.broadcastConfig(id);
+        }
+        res.json({ ok: true, data: saved });
+    });
+
+    // API: 将好友从访客列表移到导入黑名单（用于手动移除）
+    app.post('/api/friends/remove-to-blacklist', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        const gid = Number((req.body || {}).gid);
+        if (!gid) return res.status(400).json({ ok: false, error: 'Missing gid' });
+
+        try {
+            if (store.reloadGlobalConfig) {
+                store.reloadGlobalConfig();
+            }
+            // 1. 从访客列表中移除
+            const visitors = store.getVisitors ? store.getVisitors(id) : [];
+            const updatedVisitors = visitors.filter(v => v.gid !== gid);
+            if (store.setVisitors) {
+                store.setVisitors(id, updatedVisitors);
+            }
+
+            // 2. 添加到导入黑名单
+            const blacklist = store.addToImportBlacklist ? store.addToImportBlacklist(id, gid) : [];
+
+            // 3. 从蹲守列表中移除，避免继续被巡查
+            let stakeoutFriendList = [];
+            if (store.getStakeoutStealConfig && store.setStakeoutFriendList) {
+                const cfg = store.getStakeoutStealConfig(id) || {};
+                const currentList = Array.isArray(cfg.friendList) ? cfg.friendList : [];
+                const nextList = currentList.filter(friendGid => Number(friendGid) !== gid);
+                stakeoutFriendList = store.setStakeoutFriendList(id, nextList);
+            }
+
+            // 4. 同步配置
+            if (provider && typeof provider.broadcastConfig === 'function') {
+                provider.broadcastConfig(id);
+            }
+
+            res.json({ ok: true, data: { blacklist, visitors: updatedVisitors, stakeoutFriendList } });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    // API: 从导入黑名单恢复好友到访客列表
+    app.post('/api/import-blacklist/restore', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        // 检查权限
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        const gid = Number((req.body || {}).gid);
+        if (!gid) return res.status(400).json({ ok: false, error: 'Missing gid' });
+
+        try {
+            if (store.reloadGlobalConfig) {
+                store.reloadGlobalConfig();
+            }
+            // 1. 从导入黑名单中移除
+            const blacklist = store.removeFromImportBlacklist ? store.removeFromImportBlacklist(id, gid) : [];
+
+            // 2. 添加到访客列表
+            const visitors = store.getVisitors ? store.getVisitors(id) : [];
+            const exists = visitors.find(v => v.gid === gid);
+            if (!exists) {
+                visitors.push({
+                    gid,
+                    name: `GID:${gid}`,
+                    avatarUrl: '',
+                    lastSeen: Date.now(),
+                });
+                if (store.setVisitors) {
+                    store.setVisitors(id, visitors);
+                }
+            }
+
+            // 3. 同步配置
+            if (provider && typeof provider.broadcastConfig === 'function') {
+                provider.broadcastConfig(id);
+            }
+
+            res.json({ ok: true, data: { blacklist, visitors } });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
     });
 
     // API: 蔬菜黑名单
@@ -1300,6 +1515,30 @@ function startAdminServer(dataProvider) {
         next();
     };
 
+    const clearDataDir = () => {
+        const dataDir = getDataDir();
+        if (!fs.existsSync(dataDir)) {
+            return { deletedCount: 0, failed: [] };
+        }
+        const entries = fs.readdirSync(dataDir).sort((a, b) => {
+            if (a === 'logs') return -1;
+            if (b === 'logs') return 1;
+            return 0;
+        });
+        const failed = [];
+        let deletedCount = 0;
+        for (const name of entries) {
+            const target = path.join(dataDir, name);
+            try {
+                fs.rmSync(target, { recursive: true, force: true, maxRetries: 12, retryDelay: 200 });
+                deletedCount += 1;
+            } catch (e) {
+                failed.push({ name, error: e.message });
+            }
+        }
+        return { deletedCount, failed };
+    };
+
     // 获取所有卡密
     app.get('/api/admin/cards', authRequired, adminRequired, (req, res) => {
         try {
@@ -1393,10 +1632,10 @@ function startAdminServer(dataProvider) {
         }
     });
 
-    // 获取所有用户（带密码，仅管理员）
+    // 获取所有用户（兼容旧路径，不返回密码）
     app.get('/api/admin/users-with-password', authRequired, adminRequired, (req, res) => {
         try {
-            const users = userStore.getAllUsersWithPassword();
+            const users = userStore.getAllUsers();
             res.json({ ok: true, data: users });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
@@ -1488,7 +1727,9 @@ function startAdminServer(dataProvider) {
                 data: {
                     username: user.username,
                     role: user.role,
-                    card: user.card
+                    card: user.card,
+                    userCount: userStore.getUserCount(),
+                    canWipeData: userStore.isSuperAdminUsername(user.username)
                 }
             });
         } catch (e) {
@@ -1565,6 +1806,18 @@ function startAdminServer(dataProvider) {
                 quota: Number.parseInt(quota, 10),
             });
             res.json({ ok: true, data: config });
+        } catch (e) {
+            res.status(500).json({ ok: false, error: e.message });
+        }
+    });
+
+    app.post('/api/admin/wipe-data', authRequired, adminRequired, (req, res) => {
+        try {
+            if (!userStore.isSuperAdminUsername(req.currentUser?.username)) {
+                return res.status(403).json({ ok: false, error: '仅超级管理员可执行该操作' });
+            }
+            const result = clearDataDir();
+            res.json({ ok: true, data: result });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }
@@ -1939,52 +2192,6 @@ function startAdminServer(dataProvider) {
             res.json({ ok: true, data });
         } catch (e) {
             handleApiError(res, e);
-        }
-    });
-
-    // ============ QR Code Login APIs (无需账号选择) ============
-    // 这些接口不需要 authRequired 也能调用（用于登录流程）
-    app.post('/api/qr/create', async (req, res) => {
-        try {
-            const result = await MiniProgramLoginSession.requestLoginCode();
-            res.json({ ok: true, data: result });
-        } catch (e) {
-            res.status(500).json({ ok: false, error: e.message });
-        }
-    });
-
-    app.post('/api/qr/check', async (req, res) => {
-        const { code } = req.body || {};
-        if (!code) {
-            return res.status(400).json({ ok: false, error: 'Missing code' });
-        }
-
-        try {
-            const result = await MiniProgramLoginSession.queryStatus(code);
-
-            if (result.status === 'OK') {
-                const ticket = result.ticket;
-                const uin = result.uin || '';
-                const nickname = result.nickname || ''; // 获取昵称
-                const appid = '1112386029'; // Farm appid
-
-                const authCode = await MiniProgramLoginSession.getAuthCode(ticket, appid);
-
-                let avatar = '';
-                if (uin) {
-                    avatar = `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=640`;
-                }
-
-                res.json({ ok: true, data: { status: 'OK', code: authCode, uin, avatar, nickname } });
-            } else if (result.status === 'Used') {
-                res.json({ ok: true, data: { status: 'Used' } });
-            } else if (result.status === 'Wait') {
-                res.json({ ok: true, data: { status: 'Wait' } });
-            } else {
-                res.json({ ok: true, data: { status: 'Error', error: result.msg } });
-            }
-        } catch (e) {
-            res.status(500).json({ ok: false, error: e.message });
         }
     });
 

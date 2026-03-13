@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import type { ApiResult } from '@/api/result'
 import { useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api'
+import { getErrorMessage } from '@/api/error'
+import { unwrapOk } from '@/api/result'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import LandGrid from '@/components/LandGrid.vue'
 import { useAccountStore } from '@/stores/account'
@@ -16,7 +19,7 @@ const statusStore = useStatusStore()
 const toast = useToastStore()
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { friends, loading, friendLands, friendLandsLoading, blacklist, interactRecords, interactLoading, interactError } = storeToRefs(friendStore)
-const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
+const { status, loading: statusLoading, realtimeConnected, logs: realtimeLogs } = storeToRefs(statusStore)
 
 const showConfirm = ref(false)
 const confirmMessage = ref('')
@@ -36,6 +39,17 @@ const interactFilters = [
 const batchLoading = ref(false)
 const activeSidebarTab = ref('friends')
 const visibleGids = ref<Set<number>>(new Set())
+const manualGid = ref('')
+const manualHex = ref('')
+
+// 导入黑名单
+const importBlacklist = ref<number[]>([])
+const importBlacklistLoading = ref(false)
+const lastAutoBlacklistSyncAt = ref(0)
+const removedFriendsCache = ref<Map<number, any>>(new Map())
+const selectedFriendGids = ref<Set<number>>(new Set())
+const selectedBlacklistGids = ref<Set<number>>(new Set())
+const selectedImportBlacklistGids = ref<Set<number>>(new Set())
 
 function toggleGidVisibility(gid: number) {
   if (visibleGids.value.has(gid)) {
@@ -85,17 +99,57 @@ async function onConfirm() {
 }
 
 const expandedFriends = ref<Set<string>>(new Set())
+const visibleFriends = computed(() => {
+  return friends.value.filter((friend: any) => {
+    const gidNum = Number(friend?.gid || 0)
+    return !(gidNum > 0 && importBlacklist.value.includes(gidNum))
+  })
+})
+
 const filteredFriends = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
   if (!keyword)
-    return friends.value
+    return visibleFriends.value
 
-  return friends.value.filter((friend: any) => {
+  return visibleFriends.value.filter((friend: any) => {
     const name = String(friend?.name || '').toLowerCase()
     const gid = String(friend?.gid || '')
     const uin = String(friend?.uin || '')
     return name.includes(keyword) || gid.includes(keyword) || uin.includes(keyword)
   })
+})
+
+const filteredFriendGids = computed(() => {
+  return filteredFriends.value
+    .map((friend: any) => Number(friend?.gid))
+    .filter(gid => Number.isFinite(gid) && gid > 0)
+})
+
+const selectedFilteredFriendGids = computed(() => {
+  return filteredFriendGids.value.filter(gid => selectedFriendGids.value.has(gid))
+})
+
+const allFilteredFriendsSelected = computed(() => {
+  return filteredFriendGids.value.length > 0
+    && selectedFilteredFriendGids.value.length === filteredFriendGids.value.length
+})
+
+const selectedVisibleBlacklistGids = computed(() => {
+  return blacklist.value.filter(gid => selectedBlacklistGids.value.has(gid))
+})
+
+const allBlacklistSelected = computed(() => {
+  return blacklist.value.length > 0
+    && selectedVisibleBlacklistGids.value.length === blacklist.value.length
+})
+
+const selectedVisibleImportBlacklistGids = computed(() => {
+  return importBlacklist.value.filter(gid => selectedImportBlacklistGids.value.has(gid))
+})
+
+const allImportBlacklistSelected = computed(() => {
+  return importBlacklist.value.length > 0
+    && selectedVisibleImportBlacklistGids.value.length === importBlacklist.value.length
 })
 
 async function loadFriends() {
@@ -115,7 +169,123 @@ async function loadFriends() {
       friendStore.fetchInteractRecords(currentAccountId.value)
       // 加载蹲守列表
       loadStakeoutFriends()
+      // 加载导入黑名单
+      fetchImportBlacklist()
     }
+  }
+}
+
+// 获取导入黑名单
+async function fetchImportBlacklist() {
+  if (!currentAccountId.value)
+    return
+  importBlacklistLoading.value = true
+  try {
+    const { data } = await api.get('/api/import-blacklist', {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+    importBlacklist.value = unwrapOk<number[]>(data as ApiResult<number[]>, '加载导入黑名单失败') || []
+  }
+  catch (e) {
+    console.error('加载导入黑名单失败:', e)
+    toast.error(`加载导入黑名单失败: ${getErrorMessage(e, '请求失败')}`)
+  }
+  finally {
+    importBlacklistLoading.value = false
+  }
+}
+
+async function refreshFriendsWithRetry(accountId: string, retry = 0, delayMs = 300) {
+  await friendStore.fetchFriends(accountId)
+  for (let i = 0; i < retry; i++) {
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+    await friendStore.fetchFriends(accountId)
+  }
+}
+
+async function syncBlacklistAndFriendsNow() {
+  if (!currentAccountId.value)
+    return
+  await Promise.all([
+    friendStore.fetchFriends(currentAccountId.value),
+    friendStore.fetchBlacklist(currentAccountId.value),
+    fetchImportBlacklist(),
+  ])
+}
+
+// 将好友移除到导入黑名单
+async function removeFriendToBlacklist(gid: number, shouldRefresh = true, showToast = true) {
+  if (!currentAccountId.value)
+    return false
+  try {
+    const removedFriend = friends.value.find((f: any) => Number(f?.gid) === gid)
+    if (removedFriend) {
+      removedFriendsCache.value.set(gid, removedFriend)
+    }
+    const { data } = await api.post('/api/friends/remove-to-blacklist', { gid }, {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+    if (data?.ok) {
+      importBlacklist.value = data.data.blacklist || []
+      friends.value = friends.value.filter((f: any) => Number(f?.gid) !== gid)
+      if (showToast) {
+        toast.success('已移除到导入黑名单')
+      }
+      if (shouldRefresh) {
+        await refreshFriendsWithRetry(currentAccountId.value)
+      }
+      return true
+    }
+    else {
+      if (showToast) {
+        toast.error(data?.error || '操作失败')
+      }
+      return false
+    }
+  }
+  catch (e: any) {
+    if (showToast) {
+      toast.error(e?.response?.data?.error || '操作失败')
+    }
+    return false
+  }
+}
+
+// 从导入黑名单恢复好友
+async function restoreFromBlacklist(gid: number, shouldRefresh = true, showToast = true) {
+  if (!currentAccountId.value)
+    return false
+  try {
+    const { data } = await api.post('/api/import-blacklist/restore', { gid }, {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+    if (data?.ok) {
+      importBlacklist.value = data.data.blacklist || []
+      if (!friends.value.some((f: any) => Number(f?.gid) === gid)) {
+        const cached = removedFriendsCache.value.get(gid)
+        if (cached)
+          friends.value = [cached, ...friends.value]
+      }
+      if (showToast) {
+        toast.success('已恢复到好友列表')
+      }
+      if (shouldRefresh) {
+        await refreshFriendsWithRetry(currentAccountId.value)
+      }
+      return true
+    }
+    else {
+      if (showToast) {
+        toast.error(data?.error || '操作失败')
+      }
+      return false
+    }
+  }
+  catch (e: any) {
+    if (showToast) {
+      toast.error(e?.response?.data?.error || '操作失败')
+    }
+    return false
   }
 }
 
@@ -129,13 +299,63 @@ useIntervalFn(() => {
   }
 }, 1000)
 
+useIntervalFn(async () => {
+  if (!currentAccountId.value)
+    return
+  if (!currentAccount.value?.running || !status.value?.connection?.connected)
+    return
+  // 在好友列表页不自动刷新，避免滚动位置被重置
+  if (activeSidebarTab.value === 'friends')
+    return
+
+  await Promise.all([
+    friendStore.fetchFriends(currentAccountId.value),
+    friendStore.fetchBlacklist(currentAccountId.value),
+    fetchImportBlacklist(),
+  ])
+}, 8000)
+
 onMounted(() => {
   loadFriends()
 })
 
 watch(currentAccountId, () => {
   expandedFriends.value.clear()
+  selectedFriendGids.value.clear()
+  selectedBlacklistGids.value.clear()
+  selectedImportBlacklistGids.value.clear()
   loadFriends()
+})
+
+watch(() => realtimeLogs.value.length, async () => {
+  if (!currentAccountId.value)
+    return
+  if (!currentAccount.value?.running || !status.value?.connection?.connected)
+    return
+  // 在好友列表页不自动刷新，避免滚动位置被重置
+  if (activeSidebarTab.value === 'friends')
+    return
+
+  const last = realtimeLogs.value[realtimeLogs.value.length - 1]
+  if (!last)
+    return
+
+  const event = String(last?.meta?.event || '')
+  const msg = String(last?.msg || '')
+  const shouldSync = event === '自动移除非好友'
+    || event === '自动加入黑名单'
+    || msg.includes('已自动加入好友黑名单')
+    || msg.includes('已自动移除并加入导入黑名单')
+
+  if (!shouldSync)
+    return
+
+  const now = Date.now()
+  if (now - lastAutoBlacklistSyncAt.value < 600)
+    return
+  lastAutoBlacklistSyncAt.value = now
+
+  await syncBlacklistAndFriendsNow()
 })
 
 function toggleFriend(friendId: string) {
@@ -157,6 +377,12 @@ async function handleOp(friendId: string, type: string, e: Event) {
     return
 
   confirmAction('确定执行此操作吗?', async () => {
+    if (type === 'help') {
+      await friendStore.operate(currentAccountId.value!, friendId, 'water')
+      await friendStore.operate(currentAccountId.value!, friendId, 'weed')
+      await friendStore.operate(currentAccountId.value!, friendId, 'bug')
+      return
+    }
     await friendStore.operate(currentAccountId.value!, friendId, type)
   })
 }
@@ -166,6 +392,58 @@ async function handleToggleBlacklist(friend: any, e: Event) {
   if (!currentAccountId.value)
     return
   await friendStore.toggleBlacklist(currentAccountId.value, Number(friend.gid))
+}
+
+function toggleFriendSelection(gid: number, e: Event) {
+  e.stopPropagation()
+  if (selectedFriendGids.value.has(gid)) {
+    selectedFriendGids.value.delete(gid)
+  }
+  else {
+    selectedFriendGids.value.add(gid)
+  }
+}
+
+function toggleAllFilteredFriendsSelection() {
+  if (allFilteredFriendsSelected.value) {
+    filteredFriendGids.value.forEach(gid => selectedFriendGids.value.delete(gid))
+    return
+  }
+  filteredFriendGids.value.forEach(gid => selectedFriendGids.value.add(gid))
+}
+
+function toggleBlacklistSelection(gid: number) {
+  if (selectedBlacklistGids.value.has(gid)) {
+    selectedBlacklistGids.value.delete(gid)
+  }
+  else {
+    selectedBlacklistGids.value.add(gid)
+  }
+}
+
+function toggleAllBlacklistSelection() {
+  if (allBlacklistSelected.value) {
+    blacklist.value.forEach(gid => selectedBlacklistGids.value.delete(gid))
+    return
+  }
+  blacklist.value.forEach(gid => selectedBlacklistGids.value.add(gid))
+}
+
+function toggleImportBlacklistSelection(gid: number) {
+  if (selectedImportBlacklistGids.value.has(gid)) {
+    selectedImportBlacklistGids.value.delete(gid)
+  }
+  else {
+    selectedImportBlacklistGids.value.add(gid)
+  }
+}
+
+function toggleAllImportBlacklistSelection() {
+  if (allImportBlacklistSelected.value) {
+    importBlacklist.value.forEach(gid => selectedImportBlacklistGids.value.delete(gid))
+    return
+  }
+  importBlacklist.value.forEach(gid => selectedImportBlacklistGids.value.add(gid))
 }
 
 function isStakeoutFriend(gid: number) {
@@ -275,43 +553,227 @@ function getFriendNameByGid(gid: number) {
   return friend?.name || `GID:${gid}`
 }
 
+function getImportBlacklistProfileByGid(gid: number) {
+  const fromFriends = friends.value.find((f: any) => Number(f?.gid) === gid)
+  if (fromFriends) {
+    return {
+      name: String(fromFriends?.name || `GID:${gid}`),
+      avatarUrl: getFriendAvatar(fromFriends),
+    }
+  }
+
+  const fromCache = removedFriendsCache.value.get(gid)
+  if (fromCache) {
+    return {
+      name: String(fromCache?.name || `GID:${gid}`),
+      avatarUrl: getFriendAvatar(fromCache),
+    }
+  }
+
+  const fromInteract = interactRecords.value.find((record: any) => Number(record?.visitorGid) === gid)
+  if (fromInteract) {
+    return {
+      name: String(fromInteract?.nick || `GID:${gid}`),
+      avatarUrl: String(fromInteract?.avatarUrl || '').trim(),
+    }
+  }
+
+  return {
+    name: `GID:${gid}`,
+    avatarUrl: '',
+  }
+}
+
 async function handleRemoveFromBlacklist(gid: number) {
   if (!currentAccountId.value)
     return
   await friendStore.toggleBlacklist(currentAccountId.value, gid)
 }
 
-async function handleBatchOp(opType: 'help' | 'steal' | 'bad') {
+async function handleBatchFriendAction(action: 'steal' | 'help' | 'bad' | 'stakeout' | 'blacklist' | 'remove') {
   if (!currentAccountId.value || batchLoading.value)
     return
 
-  const opNames: Record<string, string> = {
-    help: '一键帮助',
-    steal: '一键偷取',
-    bad: '一键捣乱',
+  const gids = [...selectedFilteredFriendGids.value]
+  if (gids.length === 0) {
+    toast.error('请先选择好友')
+    return
   }
 
-  const action = async () => {
+  const actionTextMap: Record<string, string> = {
+    steal: '批量偷取',
+    help: '批量帮助',
+    bad: '批量捣乱',
+    stakeout: '批量蹲守',
+    blacklist: '批量加黑',
+    remove: '批量移除',
+  }
+
+  const actionRunnerMap: Record<string, (gid: number) => Promise<void>> = {
+    steal: gid => friendStore.operate(currentAccountId.value!, String(gid), 'steal'),
+    help: async (gid) => {
+      await friendStore.operate(currentAccountId.value!, String(gid), 'water')
+      await friendStore.operate(currentAccountId.value!, String(gid), 'weed')
+      await friendStore.operate(currentAccountId.value!, String(gid), 'bug')
+    },
+    bad: gid => friendStore.operate(currentAccountId.value!, String(gid), 'bad'),
+    stakeout: async (gid) => {
+      if (isStakeoutFriend(gid))
+        return
+      await api.post('/api/stakeout/friends/add', {
+        friendGid: gid,
+      }, {
+        headers: { 'x-account-id': currentAccountId.value },
+      })
+      if (!stakeoutFriendList.value.includes(gid)) {
+        stakeoutFriendList.value.push(gid)
+      }
+    },
+    blacklist: async (gid) => {
+      if (blacklist.value.includes(gid))
+        return
+      await friendStore.toggleBlacklist(currentAccountId.value!, gid)
+    },
+    remove: async (gid) => {
+      const ok = await removeFriendToBlacklist(gid, false, false)
+      if (!ok)
+        throw new Error('remove failed')
+    },
+  }
+
+  const batchAction = async () => {
     batchLoading.value = true
+    let successCount = 0
+    let failedCount = 0
     try {
-      const res = await friendStore.batchOperate(currentAccountId.value!, opType)
-      if (res.ok) {
-        toast.success(`${opNames[opType]}完成`)
-        await friendStore.fetchFriends(currentAccountId.value!)
+      const runner = actionRunnerMap[action]!
+      for (const gid of gids) {
+        try {
+          await runner(gid)
+          successCount++
+        }
+        catch {
+          failedCount++
+        }
+      }
+      if (action === 'remove') {
+        await refreshFriendsWithRetry(currentAccountId.value!)
+      }
+      else if (action === 'blacklist') {
+        await friendStore.fetchBlacklist(currentAccountId.value!)
+      }
+      else if (action === 'stakeout') {
+        await loadStakeoutFriends()
       }
       else {
-        toast.error(res.error || `${opNames[opType]}失败`)
+        await friendStore.fetchFriends(currentAccountId.value!)
       }
-    }
-    catch (e: any) {
-      toast.error(e?.message || `${opNames[opType]}失败`)
+      selectedFriendGids.value.clear()
     }
     finally {
       batchLoading.value = false
     }
+
+    if (failedCount === 0) {
+      toast.success(`${actionTextMap[action]}完成，共 ${successCount} 个`)
+    }
+    else if (successCount > 0) {
+      toast.success(`${actionTextMap[action]}完成，成功 ${successCount} 个，失败 ${failedCount} 个`)
+    }
+    else {
+      toast.error(`${actionTextMap[action]}失败`)
+    }
   }
 
-  confirmAction(`确定执行${opNames[opType]}吗？`, action)
+  confirmAction(`确定执行${actionTextMap[action]}吗？已选 ${gids.length} 个好友`, batchAction)
+}
+
+async function handleBatchRemoveFromBlacklist() {
+  if (!currentAccountId.value || batchLoading.value)
+    return
+  const gids = [...selectedVisibleBlacklistGids.value]
+  if (gids.length === 0) {
+    toast.error('请先选择黑名单好友')
+    return
+  }
+
+  const batchAction = async () => {
+    batchLoading.value = true
+    let successCount = 0
+    let failedCount = 0
+    try {
+      for (const gid of gids) {
+        try {
+          if (blacklist.value.includes(gid)) {
+            await friendStore.toggleBlacklist(currentAccountId.value!, gid)
+          }
+          successCount++
+        }
+        catch {
+          failedCount++
+        }
+      }
+      await friendStore.fetchBlacklist(currentAccountId.value!)
+      selectedBlacklistGids.value.clear()
+    }
+    finally {
+      batchLoading.value = false
+    }
+
+    if (failedCount === 0) {
+      toast.success(`批量移出黑名单完成，共 ${successCount} 个`)
+    }
+    else if (successCount > 0) {
+      toast.success(`批量移出黑名单完成，成功 ${successCount} 个，失败 ${failedCount} 个`)
+    }
+    else {
+      toast.error('批量移出黑名单失败')
+    }
+  }
+
+  confirmAction(`确定批量移出黑名单吗？已选 ${gids.length} 个`, batchAction)
+}
+
+async function handleBatchRestoreFromImportBlacklist() {
+  if (!currentAccountId.value || batchLoading.value)
+    return
+  const gids = [...selectedVisibleImportBlacklistGids.value]
+  if (gids.length === 0) {
+    toast.error('请先选择导入黑名单好友')
+    return
+  }
+
+  const batchAction = async () => {
+    batchLoading.value = true
+    let successCount = 0
+    let failedCount = 0
+    try {
+      for (const gid of gids) {
+        const ok = await restoreFromBlacklist(gid, false, false)
+        if (ok)
+          successCount++
+        else
+          failedCount++
+      }
+      await refreshFriendsWithRetry(currentAccountId.value!)
+      selectedImportBlacklistGids.value.clear()
+    }
+    finally {
+      batchLoading.value = false
+    }
+
+    if (failedCount === 0) {
+      toast.success(`批量恢复完成，共 ${successCount} 个`)
+    }
+    else if (successCount > 0) {
+      toast.success(`批量恢复完成，成功 ${successCount} 个，失败 ${failedCount} 个`)
+    }
+    else {
+      toast.error('批量恢复失败')
+    }
+  }
+
+  confirmAction(`确定批量恢复吗？已选 ${gids.length} 个`, batchAction)
 }
 
 const filteredInteractRecords = computed(() => {
@@ -413,32 +875,161 @@ function formatInteractTime(timestamp: number) {
     hour12: false,
   })
 }
+
+// 解析批量GID输入，支持中英文逗号、空格、换行分隔
+function parseBatchGids(input: string): number[] {
+  // 统一替换分隔符为英文逗号，支持中英文逗号、空格、换行
+  const normalized = input
+    .replace(/[，,]/g, ',') // 中英文逗号统一为英文逗号
+    .replace(/\s+/g, ',') // 空格、换行等空白字符替换为逗号
+    .replace(/,+/g, ',') // 多个连续逗号合并为一个
+
+  const parts = normalized.split(',').filter(s => s.trim())
+  const gids: number[] = []
+
+  for (const part of parts) {
+    const num = Number(part.trim())
+    if (!Number.isNaN(num) && num > 0) {
+      // 跳过导入黑名单中的GID
+      if (!importBlacklist.value.includes(num)) {
+        gids.push(num)
+      }
+    }
+  }
+
+  // 去重
+  return [...new Set(gids)]
+}
+
+async function handleAddManualGid() {
+  if (!currentAccountId.value) {
+    toast.error('请选择账号')
+    return
+  }
+
+  const gidStr = manualGid.value.trim()
+  if (!gidStr) {
+    toast.error('请输入GID')
+    return
+  }
+
+  const gids = parseBatchGids(gidStr)
+  if (gids.length === 0) {
+    toast.error('请输入有效的GID')
+    return
+  }
+
+  batchLoading.value = true
+  try {
+    const { data } = await api.post('/api/friends/add', {
+      gids,
+    }, {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+
+    if (data?.ok) {
+      const { success = [], failed = [] } = data.results || {}
+      if (success.length > 0 && failed.length === 0) {
+        toast.success(`成功添加 ${success.length} 个好友`)
+      }
+      else if (success.length > 0 && failed.length > 0) {
+        toast.success(`成功添加 ${success.length} 个，失败 ${failed.length} 个`)
+      }
+      else {
+        toast.error('添加失败')
+      }
+      manualGid.value = ''
+      await friendStore.fetchFriends(currentAccountId.value!)
+    }
+    else {
+      toast.error(data?.error || '添加失败')
+    }
+  }
+  catch (e: any) {
+    const status = Number(e?.response?.status || 0)
+    if (status === 413) {
+      toast.error('Hex内容过大（请求体超限），请精简后重试')
+    }
+    else {
+      toast.error(e?.response?.data?.error || '操作失败')
+    }
+  }
+  finally {
+    batchLoading.value = false
+  }
+}
+
+async function handleAddManualHex() {
+  if (!currentAccountId.value) {
+    toast.error('请选择账号')
+    return
+  }
+
+  const hex = manualHex.value.trim()
+  if (!hex) {
+    toast.error('请输入Hex')
+    return
+  }
+
+  batchLoading.value = true
+  try {
+    const { data } = await api.post('/api/friends/add-hex', {
+      hex,
+    }, {
+      headers: { 'x-account-id': currentAccountId.value },
+    })
+
+    if (data?.ok) {
+      const { success = [], failed = [] } = data.results || {}
+      if (success.length > 0 && failed.length === 0) {
+        toast.success(`Hex添加成功 ${success.length} 个`)
+      }
+      else if (success.length > 0 && failed.length > 0) {
+        toast.success(`Hex添加成功 ${success.length} 个，失败 ${failed.length} 个`)
+      }
+      else {
+        toast.error(data?.error || 'Hex添加失败')
+      }
+      manualHex.value = ''
+      await friendStore.fetchFriends(currentAccountId.value!)
+    }
+    else {
+      toast.error(data?.error || 'Hex添加失败')
+    }
+  }
+  catch (e: any) {
+    toast.error(e?.response?.data?.error || '操作失败')
+  }
+  finally {
+    batchLoading.value = false
+  }
+}
 </script>
 
 <template>
-  <div class="h-full flex flex-col p-4">
-    <div class="mb-4 flex space-x-2">
+  <div class="h-full flex flex-col p-2.5 sm:p-4">
+    <div class="mb-3.5 flex gap-2 overflow-x-auto pb-1 sm:mb-4">
       <button
-        class="rounded-lg px-4 py-2 font-medium transition-colors"
+        class="h-10 shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4"
         :class="activeSidebarTab === 'friends'
           ? 'bg-blue-500 text-white shadow-md'
           : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
         @click="activeSidebarTab = 'friends'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">👥</span>
+          <div class="i-carbon-user-multiple h-6 w-6 flex items-center justify-center text-lg" />
           <span>好友列表</span>
         </div>
       </button>
       <button
-        class="rounded-lg px-4 py-2 font-medium transition-colors"
+        class="h-10 shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4"
         :class="activeSidebarTab === 'blacklist'
           ? 'bg-blue-500 text-white shadow-md'
           : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
         @click="activeSidebarTab = 'blacklist'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">🚫</span>
+          <div class="i-carbon-subtract-alt h-6 w-6 flex items-center justify-center text-lg" />
           <span>黑名单</span>
           <span v-if="blacklist.length" class="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 dark:bg-red-900/50 dark:text-red-300">
             {{ blacklist.length }}
@@ -446,17 +1037,32 @@ function formatInteractTime(timestamp: number) {
         </div>
       </button>
       <button
-        class="rounded-lg px-4 py-2 font-medium transition-colors"
+        class="h-10 shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4"
         :class="activeSidebarTab === 'visitors'
           ? 'bg-blue-500 text-white shadow-md'
           : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
         @click="activeSidebarTab = 'visitors'"
       >
         <div class="flex items-center space-x-2">
-          <span class="h-6 w-6 flex items-center justify-center">👁️</span>
+          <div class="i-carbon-view h-6 w-6 flex items-center justify-center text-lg" />
           <span>最近访客</span>
           <span v-if="interactRecords.length" class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
             {{ interactRecords.length }}
+          </span>
+        </div>
+      </button>
+      <button
+        class="h-10 shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4"
+        :class="activeSidebarTab === 'importBlacklist'
+          ? 'bg-blue-500 text-white shadow-md'
+          : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+        @click="activeSidebarTab = 'importBlacklist'"
+      >
+        <div class="flex items-center space-x-2">
+          <div class="i-carbon-download h-6 w-6 flex items-center justify-center text-lg" />
+          <span>导入黑名单</span>
+          <span v-if="importBlacklist.length" class="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 dark:bg-red-900/50 dark:text-red-300">
+            {{ importBlacklist.length }}
           </span>
         </div>
       </button>
@@ -465,15 +1071,13 @@ function formatInteractTime(timestamp: number) {
     <div class="flex-1 overflow-y-auto">
       <!-- 好友列表 -->
       <div v-if="activeSidebarTab === 'friends'">
-        <div class="mb-6 flex items-center justify-between">
+        <div class="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
           <h3 class="text-xl text-gray-900 font-bold dark:text-white">
             好友列表
           </h3>
-          <div class="flex items-center gap-3">
-            <div class="relative">
-              <div class="absolute left-3 top-1/2 text-gray-400 -translate-y-1/2 dark:text-gray-500">
-                🔍
-              </div>
+          <div class="w-full flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+            <div class="relative w-full sm:w-auto">
+              <div class="i-carbon-search absolute left-3 top-1/2 text-sm text-gray-400 -translate-y-1/2 dark:text-gray-500" />
               <input
                 v-model="searchKeyword"
                 type="text"
@@ -481,46 +1085,109 @@ function formatInteractTime(timestamp: number) {
                 class="w-full border border-gray-300 rounded-lg bg-white py-2 pl-10 pr-4 text-sm sm:w-64 dark:border-gray-600 focus:border-blue-500 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
             </div>
-            <div v-if="friends.length" class="text-sm text-gray-500 dark:text-gray-400">
-              共 {{ filteredFriends.length }}/{{ friends.length }} 名好友
+            <div v-if="visibleFriends.length" class="text-xs text-gray-500 sm:text-sm dark:text-gray-400">
+              共 {{ filteredFriends.length }}/{{ visibleFriends.length }} 名好友
             </div>
           </div>
         </div>
 
-        <div v-if="status?.connection?.connected && currentAccountId" class="mb-6">
-          <div class="flex flex-wrap gap-2 rounded-lg bg-white p-3 shadow dark:bg-gray-800">
-            <span class="flex items-center text-sm text-gray-500 dark:text-gray-400">批量操作：</span>
+        <div v-if="status?.connection?.connected && currentAccountId" class="mb-5 sm:mb-6">
+          <div class="flex flex-wrap gap-2 rounded-xl bg-white p-3.5 shadow dark:bg-gray-800">
+            <span class="w-full flex items-center text-xs text-gray-500 sm:w-auto sm:text-sm dark:text-gray-400">批量操作：</span>
             <button
-              class="rounded bg-green-100 px-3 py-1.5 text-sm text-green-700 transition dark:bg-green-900/30 hover:bg-green-200 dark:text-green-400 disabled:opacity-50 dark:hover:bg-green-900/50"
-              :disabled="batchLoading"
-              @click="handleBatchOp('help')"
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-gray-100 px-3 py-2 text-sm text-gray-700 transition sm:h-auto sm:min-w-0 sm:flex-none disabled:cursor-not-allowed dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 disabled:opacity-50 dark:hover:bg-gray-600"
+              :disabled="batchLoading || filteredFriendGids.length === 0"
+              @click="toggleAllFilteredFriendsSelection"
             >
               <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
-              一键帮助
+              {{ allFilteredFriendsSelected ? '取消全选' : '全选' }}
             </button>
             <button
-              class="rounded bg-blue-100 px-3 py-1.5 text-sm text-blue-700 transition dark:bg-blue-900/30 hover:bg-blue-200 dark:text-blue-400 disabled:opacity-50 dark:hover:bg-blue-900/50"
-              :disabled="batchLoading"
-              @click="handleBatchOp('steal')"
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-blue-100 px-3 py-2 text-sm text-blue-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-blue-900/30 hover:bg-blue-200 dark:text-blue-400 disabled:opacity-50 dark:hover:bg-blue-900/50"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('steal')"
             >
               <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
-              一键偷取
+              批量偷取
             </button>
             <button
-              class="rounded bg-red-100 px-3 py-1.5 text-sm text-red-700 transition dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 disabled:opacity-50 dark:hover:bg-red-900/50"
-              :disabled="batchLoading"
-              @click="handleBatchOp('bad')"
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-green-100 px-3 py-2 text-sm text-green-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-green-900/30 hover:bg-green-200 dark:text-green-400 disabled:opacity-50 dark:hover:bg-green-900/50"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('help')"
             >
               <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
-              一键捣乱
+              批量帮助
+            </button>
+            <button
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 disabled:opacity-50 dark:hover:bg-red-900/50"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('bad')"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量捣乱
+            </button>
+            <button
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-purple-100 px-3 py-2 text-sm text-purple-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-purple-900/30 hover:bg-purple-200 dark:text-purple-400 disabled:opacity-50 dark:hover:bg-purple-900/50"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('stakeout')"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量蹲守
+            </button>
+            <button
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-gray-100 px-3 py-2 text-sm text-gray-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-gray-700/50 hover:bg-gray-200 dark:text-gray-300 disabled:opacity-50 dark:hover:bg-gray-700"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('blacklist')"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量加黑
+            </button>
+            <button
+              class="h-10 min-w-[calc(50%-0.25rem)] flex-1 rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition sm:h-auto sm:min-w-0 sm:flex-none dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 disabled:opacity-50 dark:hover:bg-red-900/50"
+              :disabled="batchLoading || selectedFilteredFriendGids.length === 0"
+              @click="handleBatchFriendAction('remove')"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量移除
+            </button>
+            <span class="w-full self-center text-xs text-gray-400 sm:w-auto">
+              已选 {{ selectedFilteredFriendGids.length }}/{{ filteredFriendGids.length }}
+            </span>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2 rounded-xl bg-white p-3.5 shadow dark:bg-gray-800">
+            <span class="w-full flex items-center text-xs text-gray-500 sm:w-auto sm:text-sm dark:text-gray-400">手动添加：</span>
+            <textarea
+              v-model="manualGid"
+              placeholder="输入好友GID，支持批量（用逗号、空格或换行分隔）"
+              rows="2"
+              class="w-full resize-none border border-gray-300 rounded-lg bg-white px-4 py-2 text-sm sm:w-64 dark:border-gray-600 focus:border-blue-500 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <button
+              :disabled="batchLoading"
+              class="h-10 w-full rounded bg-purple-100 px-3 py-2 text-sm text-purple-700 transition sm:h-auto sm:w-auto disabled:cursor-not-allowed dark:bg-purple-900/30 hover:bg-purple-200 dark:text-purple-400 disabled:opacity-50 dark:hover:bg-purple-900/50"
+              @click="handleAddManualGid"
+            >
+              {{ batchLoading ? '添加中...' : '添加好友' }}
+            </button>
+            <span class="mt-1 w-full flex items-center text-xs text-gray-500 sm:mt-0 sm:w-auto sm:text-sm dark:text-gray-400">Hex添加：</span>
+            <textarea
+              v-model="manualHex"
+              placeholder="粘贴好友Protobuf Hex，自动解析gid/头像/昵称并导入"
+              rows="2"
+              class="w-full resize-none border border-gray-300 rounded-lg bg-white px-4 py-2 text-sm sm:w-96 dark:border-gray-600 focus:border-blue-500 dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <button
+              :disabled="batchLoading"
+              class="h-10 w-full rounded bg-amber-100 px-3 py-2 text-sm text-amber-700 transition sm:h-auto sm:w-auto disabled:cursor-not-allowed dark:bg-amber-900/30 hover:bg-amber-200 dark:text-amber-400 disabled:opacity-50 dark:hover:bg-amber-900/50"
+              @click="handleAddManualHex"
+            >
+              {{ batchLoading ? '添加中...' : 'Hex添加' }}
             </button>
           </div>
         </div>
 
         <div v-if="loading || statusLoading" class="flex justify-center py-12">
-          <div class="text-4xl text-blue-500">
-            ⏳
-          </div>
+          <div class="i-carbon-circle-dash animate-spin text-4xl text-blue-500" />
         </div>
 
         <div v-else-if="!currentAccountId" class="rounded-lg bg-white p-8 text-center text-gray-500 shadow dark:bg-gray-800">
@@ -528,9 +1195,7 @@ function formatInteractTime(timestamp: number) {
         </div>
 
         <div v-else-if="!status?.connection?.connected" class="flex flex-col items-center justify-center gap-4 rounded-lg bg-white p-12 text-center text-gray-500 shadow dark:bg-gray-800">
-          <div class="text-4xl text-gray-400">
-            🔌
-          </div>
+          <div class="i-carbon-plug text-4xl text-gray-400" />
           <div>
             <div class="text-lg text-gray-700 font-medium dark:text-gray-300">
               账号未登录
@@ -549,14 +1214,21 @@ function formatInteractTime(timestamp: number) {
           <div
             v-for="friend in filteredFriends"
             :key="friend.gid"
-            class="overflow-hidden rounded-lg bg-white shadow dark:bg-gray-800"
+            class="overflow-hidden rounded-xl bg-white shadow dark:bg-gray-800"
           >
             <div
-              class="flex flex-col cursor-pointer justify-between gap-4 p-4 transition sm:flex-row sm:items-center hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              class="flex flex-col cursor-pointer justify-between gap-3 p-3 transition sm:flex-row sm:items-center sm:gap-4 hover:bg-gray-50 sm:p-4 dark:hover:bg-gray-700/50"
               :class="blacklist.includes(Number(friend.gid)) ? 'opacity-50' : ''"
               @click="toggleFriend(friend.gid)"
             >
-              <div class="flex items-center gap-3">
+              <div class="min-w-0 flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 cursor-pointer border-gray-300 rounded text-blue-600 focus:ring-blue-500"
+                  :checked="selectedFriendGids.has(Number(friend.gid))"
+                  @click.stop
+                  @change="toggleFriendSelection(Number(friend.gid), $event)"
+                >
                 <div class="h-10 w-10 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-200 ring-1 ring-gray-100 dark:bg-gray-600 dark:ring-gray-700">
                   <img
                     v-if="canShowFriendAvatar(friend)"
@@ -566,12 +1238,13 @@ function formatInteractTime(timestamp: number) {
                     @error="handleFriendAvatarError(friend)"
                   >
                   <div v-else class="text-gray-400">
-                    👤
+                    <div class="i-carbon-user-avatar text-lg" />
                   </div>
                 </div>
-                <div>
-                  <div class="flex items-center gap-2 font-bold">
-                    {{ friend.name }} ({{ friend.gid }})
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2 text-sm font-bold sm:text-base">
+                    <span class="max-w-[10rem] truncate sm:max-w-none">{{ friend.name }}</span>
+                    <span class="text-gray-500">({{ friend.gid }})</span>
                     <span v-if="blacklist.includes(Number(friend.gid))" class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400">已屏蔽</span>
                   </div>
                   <div class="text-sm" :class="getFriendStatusText(friend) !== '无操作' ? 'text-green-500 font-medium' : 'text-gray-400'">
@@ -580,51 +1253,45 @@ function formatInteractTime(timestamp: number) {
                 </div>
               </div>
 
-              <div class="flex flex-wrap gap-2">
+              <div class="grid grid-cols-3 w-full gap-2 sm:w-auto sm:flex sm:flex-wrap">
                 <button
-                  class="rounded bg-blue-100 px-3 py-2 text-sm text-blue-700 transition dark:bg-blue-900/30 hover:bg-blue-200 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                  class="h-9 w-full rounded bg-blue-100 px-3 py-2 text-[13px] text-blue-700 transition sm:h-auto sm:w-auto dark:bg-blue-900/30 hover:bg-blue-200 sm:text-sm dark:text-blue-400 dark:hover:bg-blue-900/50"
                   @click="handleOp(friend.gid, 'steal', $event)"
                 >
                   偷取
                 </button>
                 <button
-                  class="rounded bg-cyan-100 px-3 py-2 text-sm text-cyan-700 transition dark:bg-cyan-900/30 hover:bg-cyan-200 dark:text-cyan-400 dark:hover:bg-cyan-900/50"
-                  @click="handleOp(friend.gid, 'water', $event)"
+                  class="h-9 w-full rounded bg-green-100 px-3 py-2 text-[13px] text-green-700 transition sm:h-auto sm:w-auto dark:bg-green-900/30 hover:bg-green-200 sm:text-sm dark:text-green-400 dark:hover:bg-green-900/50"
+                  @click="handleOp(friend.gid, 'help', $event)"
                 >
-                  浇水
+                  帮助
                 </button>
                 <button
-                  class="rounded bg-green-100 px-3 py-2 text-sm text-green-700 transition dark:bg-green-900/30 hover:bg-green-200 dark:text-green-400 dark:hover:bg-green-900/50"
-                  @click="handleOp(friend.gid, 'weed', $event)"
-                >
-                  除草
-                </button>
-                <button
-                  class="rounded bg-orange-100 px-3 py-2 text-sm text-orange-700 transition dark:bg-orange-900/30 hover:bg-orange-200 dark:text-orange-400 dark:hover:bg-orange-900/50"
-                  @click="handleOp(friend.gid, 'bug', $event)"
-                >
-                  除虫
-                </button>
-                <button
-                  class="rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 dark:hover:bg-red-900/50"
+                  class="h-9 w-full rounded bg-red-100 px-3 py-2 text-[13px] text-red-700 transition sm:h-auto sm:w-auto dark:bg-red-900/30 hover:bg-red-200 sm:text-sm dark:text-red-400 dark:hover:bg-red-900/50"
                   @click="handleOp(friend.gid, 'bad', $event)"
                 >
                   捣乱
                 </button>
                 <button
-                  class="rounded bg-purple-100 px-3 py-2 text-sm text-purple-700 transition dark:bg-purple-900/30 hover:bg-purple-200 dark:text-purple-400 dark:hover:bg-purple-900/50"
+                  class="h-9 w-full rounded bg-purple-100 px-3 py-2 text-[13px] text-purple-700 transition sm:h-auto sm:w-auto dark:bg-purple-900/30 hover:bg-purple-200 sm:text-sm dark:text-purple-400 dark:hover:bg-purple-900/50"
                   @click="handleToggleStakeout(friend, $event)"
                 >
                   {{ isStakeoutFriend(Number(friend.gid)) ? '取消蹲守' : '蹲守' }}
                 </button>
                 <button
-                  class="rounded px-3 py-2 text-sm transition"
+                  class="h-9 w-full rounded px-3 py-2 text-[13px] transition sm:h-auto sm:w-auto sm:text-sm"
                   :class="blacklist.includes(Number(friend.gid))
                     ? 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-700/50 dark:text-gray-400 dark:hover:bg-gray-700'"
                   @click="handleToggleBlacklist(friend, $event)"
                 >
                   {{ blacklist.includes(Number(friend.gid)) ? '移出黑名单' : '加入黑名单' }}
+                </button>
+                <button
+                  class="h-9 w-full rounded bg-red-100 px-3 py-2 text-[13px] text-red-700 transition sm:h-auto sm:w-auto dark:bg-red-900/30 hover:bg-red-200 sm:text-sm dark:text-red-400 dark:hover:bg-red-900/50"
+                  @click="removeFriendToBlacklist(Number(friend.gid))"
+                >
+                  移除
                 </button>
               </div>
             </div>
@@ -655,7 +1322,27 @@ function formatInteractTime(timestamp: number) {
           </p>
         </div>
 
-        <div class="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+        <div class="rounded-xl bg-white p-4 shadow dark:bg-gray-800 sm:p-6">
+          <div class="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              class="min-w-[calc(50%-0.25rem)] flex-1 rounded bg-gray-100 px-3 py-2 text-sm text-gray-700 transition sm:min-w-0 sm:flex-none disabled:cursor-not-allowed dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 disabled:opacity-50 dark:hover:bg-gray-600"
+              :disabled="batchLoading || blacklist.length === 0"
+              @click="toggleAllBlacklistSelection"
+            >
+              {{ allBlacklistSelected ? '取消全选' : '全选' }}
+            </button>
+            <button
+              class="min-w-[calc(50%-0.25rem)] flex-1 rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition sm:min-w-0 sm:flex-none disabled:cursor-not-allowed dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 disabled:opacity-50 dark:hover:bg-red-900/50"
+              :disabled="batchLoading || selectedVisibleBlacklistGids.length === 0"
+              @click="handleBatchRemoveFromBlacklist"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量移出黑名单
+            </button>
+            <span class="w-full text-xs text-gray-400 sm:w-auto">
+              已选 {{ selectedVisibleBlacklistGids.length }}/{{ blacklist.length }}
+            </span>
+          </div>
           <div v-if="blacklist.length === 0" class="py-8 text-center text-gray-500 dark:text-gray-400">
             暂无黑名单好友
           </div>
@@ -663,9 +1350,15 @@ function formatInteractTime(timestamp: number) {
             <div
               v-for="gid in blacklist"
               :key="gid"
-              class="flex flex-col cursor-pointer justify-between gap-4 border border-gray-100 rounded-lg p-4 transition sm:flex-row sm:items-center dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              class="flex cursor-pointer items-center justify-between gap-3 border border-gray-100 rounded-lg p-3 transition sm:gap-4 dark:border-gray-700 hover:bg-gray-50 sm:p-4 dark:hover:bg-gray-700/50"
             >
-              <div class="flex items-center gap-3">
+              <div class="min-w-0 flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 cursor-pointer border-gray-300 rounded text-blue-600 focus:ring-blue-500"
+                  :checked="selectedBlacklistGids.has(gid)"
+                  @click.stop="toggleBlacklistSelection(gid)"
+                >
                 <div class="h-10 w-10 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-200 ring-1 ring-gray-100 dark:bg-gray-600 dark:ring-gray-700">
                   <img
                     v-if="canShowFriendAvatar(friends.find(f => Number(f.gid) === gid))"
@@ -675,11 +1368,11 @@ function formatInteractTime(timestamp: number) {
                     @error="handleFriendAvatarError(friends.find(f => Number(f.gid) === gid))"
                   >
                   <div v-else class="text-gray-400">
-                    👤
+                    <div class="i-carbon-user-avatar text-lg" />
                   </div>
                 </div>
-                <div>
-                  <div class="flex items-center gap-2 font-bold">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2 font-bold">
                     {{ getFriendNameByGid(gid) }}
                     <span class="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400">已屏蔽</span>
                   </div>
@@ -690,7 +1383,7 @@ function formatInteractTime(timestamp: number) {
               </div>
 
               <button
-                class="rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 dark:hover:bg-red-900/50"
+                class="h-9 shrink-0 rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 dark:hover:bg-red-900/50"
                 @click="handleRemoveFromBlacklist(gid)"
               >
                 移出黑名单
@@ -708,7 +1401,7 @@ function formatInteractTime(timestamp: number) {
           </h3>
         </div>
 
-        <div class="rounded-lg bg-white p-6 shadow dark:bg-gray-800">
+        <div class="rounded-xl bg-white p-4 shadow dark:bg-gray-800 sm:p-6">
           <div class="mb-4 flex flex-wrap items-center gap-2">
             <button
               v-for="item in interactFilters"
@@ -754,7 +1447,7 @@ function formatInteractTime(timestamp: number) {
                   @error="handleInteractAvatarError(record)"
                 >
                 <div v-else class="text-gray-400">
-                  👤
+                  <div class="i-carbon-user-avatar text-lg" />
                 </div>
               </div>
               <div class="min-w-0 flex-1">
@@ -777,8 +1470,8 @@ function formatInteractTime(timestamp: number) {
                       class="ml-1 cursor-pointer opacity-60 hover:opacity-100"
                       @click.stop="toggleGidVisibility(record.visitorGid)"
                     >
-                      <span v-if="visibleGids.has(record.visitorGid)">👁️</span>
-                      <span v-else>🙈</span>
+                      <span v-if="visibleGids.has(record.visitorGid)" class="i-carbon-view inline-block align-middle" />
+                      <span v-else class="i-carbon-view-off inline-block align-middle" />
                     </button>
                   </span>
                 </div>
@@ -793,6 +1486,95 @@ function formatInteractTime(timestamp: number) {
 
             <div v-if="filteredInteractRecords.length > visibleInteractRecords.length" class="text-center text-xs text-gray-400">
               仅展示最近 {{ visibleInteractRecords.length }} 条
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 导入黑名单 -->
+      <div v-if="activeSidebarTab === 'importBlacklist'">
+        <div class="mb-6">
+          <h3 class="text-xl text-gray-900 font-bold dark:text-white">
+            导入黑名单
+          </h3>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+            在导入黑名单中的GID将被跳过，不会添加到好友列表。删除后可恢复。
+          </p>
+        </div>
+
+        <div class="rounded-xl bg-white p-4 shadow dark:bg-gray-800 sm:p-6">
+          <div class="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              class="min-w-[calc(50%-0.25rem)] flex-1 rounded bg-gray-100 px-3 py-2 text-sm text-gray-700 transition sm:min-w-0 sm:flex-none disabled:cursor-not-allowed dark:bg-gray-700 hover:bg-gray-200 dark:text-gray-300 disabled:opacity-50 dark:hover:bg-gray-600"
+              :disabled="batchLoading || importBlacklist.length === 0"
+              @click="toggleAllImportBlacklistSelection"
+            >
+              {{ allImportBlacklistSelected ? '取消全选' : '全选' }}
+            </button>
+            <button
+              class="min-w-[calc(50%-0.25rem)] flex-1 rounded bg-green-100 px-3 py-2 text-sm text-green-700 transition sm:min-w-0 sm:flex-none disabled:cursor-not-allowed dark:bg-green-900/30 hover:bg-green-200 dark:text-green-400 disabled:opacity-50 dark:hover:bg-green-900/50"
+              :disabled="batchLoading || selectedVisibleImportBlacklistGids.length === 0"
+              @click="handleBatchRestoreFromImportBlacklist"
+            >
+              <div v-if="batchLoading" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+              批量恢复
+            </button>
+            <span class="w-full text-xs text-gray-400 sm:w-auto">
+              已选 {{ selectedVisibleImportBlacklistGids.length }}/{{ importBlacklist.length }}
+            </span>
+          </div>
+          <div v-if="importBlacklistLoading" class="flex justify-center py-8">
+            <div class="i-carbon-circle-dash animate-spin text-4xl text-blue-500" />
+          </div>
+          <div v-else-if="importBlacklist.length === 0" class="py-8 text-center text-gray-500 dark:text-gray-400">
+            暂无导入黑名单
+          </div>
+          <div v-else class="space-y-4">
+            <div
+              v-for="gid in importBlacklist"
+              :key="gid"
+              class="flex cursor-pointer items-center justify-between gap-3 border border-gray-100 rounded-lg p-3 transition sm:gap-4 dark:border-gray-700 hover:bg-gray-50 sm:p-4 dark:hover:bg-gray-700/50"
+            >
+              <div class="min-w-0 flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 cursor-pointer border-gray-300 rounded text-blue-600 focus:ring-blue-500"
+                  :checked="selectedImportBlacklistGids.has(gid)"
+                  @click.stop="toggleImportBlacklistSelection(gid)"
+                >
+                <div class="h-10 w-10 flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-200 ring-1 ring-gray-100 dark:bg-gray-600 dark:ring-gray-700">
+                  <img
+                    v-if="getImportBlacklistProfileByGid(gid).avatarUrl"
+                    :src="getImportBlacklistProfileByGid(gid).avatarUrl"
+                    class="h-full w-full object-cover"
+                    loading="lazy"
+                  >
+                  <span v-else class="i-carbon-user-avatar text-lg text-gray-400" />
+                </div>
+                <div class="min-w-0">
+                  <div class="text-base text-gray-900 font-medium dark:text-white">
+                    {{ getImportBlacklistProfileByGid(gid).name }}
+                  </div>
+                  <div class="text-sm text-gray-400">
+                    GID: {{ getDisplayGid(gid) }}
+                    <button
+                      class="ml-1 cursor-pointer opacity-60 hover:opacity-100"
+                      @click.stop="toggleGidVisibility(gid)"
+                    >
+                      <span v-if="visibleGids.has(gid)" class="i-carbon-view inline-block align-middle" />
+                      <span v-else class="i-carbon-view-off inline-block align-middle" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="ml-auto flex items-center gap-2">
+                <button
+                  class="h-9 shrink-0 rounded bg-green-100 px-3 py-1.5 text-sm text-green-700 transition dark:bg-green-900/30 hover:bg-green-200 dark:text-green-400 dark:hover:bg-green-900/50"
+                  @click.stop="restoreFromBlacklist(gid)"
+                >
+                  恢复
+                </button>
+              </div>
             </div>
           </div>
         </div>

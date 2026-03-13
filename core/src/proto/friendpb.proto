@@ -107,6 +107,15 @@ message SetBlockApplicationsReply {
     bool block = 1;
 }
 
+// --- 批量获取好友信息 ---
+message GetGameFriendsRequest {
+    repeated int64 gids = 1;
+}
+
+message GetGameFriendsReply {
+    repeated GameFriend game_friends = 1;
+}
+
 // ============ 服务器推送通知 ============
 
 // 收到好友申请通知

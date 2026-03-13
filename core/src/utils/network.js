@@ -8,6 +8,7 @@ const process = require('node:process');
 const WebSocket = require('ws');
 const { CONFIG } = require('../config/config');
 const { createScheduler } = require('../services/scheduler');
+const { RateLimiter } = require('../services/rate-limiter');
 const { updateStatusFromLogin, updateStatusGold, updateStatusLevel } = require('../services/status');
 const { recordOperation } = require('../services/stats');
 const { types } = require('./proto');
@@ -24,6 +25,16 @@ let serverSeq = 0;
 const pendingCallbacks = new Map();
 let wsErrorState = { code: 0, at: 0, message: '' };
 const networkScheduler = createScheduler('network');
+
+// ============ 发送限速（避免批量操作触发服务端限流） ============
+// 默认启用；如需关闭，设置环境变量 NETWORK_RATE_LIMIT=0
+const enableNetworkRateLimit = String(process.env.NETWORK_RATE_LIMIT ?? '1') !== '0';
+const networkRateLimiter = new RateLimiter({
+    maxConcurrent: Number(process.env.NETWORK_RATE_LIMIT_CONCURRENCY || 3) || 3,
+    minInterval: Number(process.env.NETWORK_RATE_LIMIT_MIN_INTERVAL || 50) || 50,
+    maxRetries: 0,
+    retryDelay: 0,
+});
 
 function rejectAllPendingRequests(reason = '请求被中断') {
     const entries = Array.from(pendingCallbacks.entries());
@@ -121,7 +132,7 @@ async function sendMsg(serviceName, methodName, bodyBytes, callback) {
     return true;
 }
 
-function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 10000) {
+function sendMsgAsyncInternal(serviceName, methodName, bodyBytes, timeout = 10000) {
     return new Promise((resolve, reject) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             reject(new Error(`连接未打开: ${methodName}`));
@@ -149,6 +160,24 @@ function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 10000) {
             reject(err);
         });
     });
+}
+
+/**
+ * 发送请求（带可选限速）
+ * options:
+ * - bypassRateLimit: true 时跳过全局限速（用于强实时场景）
+ * - priority: 数字越大越优先
+ */
+function sendMsgAsync(serviceName, methodName, bodyBytes, timeout = 10000, options = {}) {
+    const bypass = !!options.bypassRateLimit;
+    const priority = Number(options.priority || 0) || 0;
+    if (!enableNetworkRateLimit || bypass) {
+        return sendMsgAsyncInternal(serviceName, methodName, bodyBytes, timeout);
+    }
+    return networkRateLimiter.add(
+        () => sendMsgAsyncInternal(serviceName, methodName, bodyBytes, timeout),
+        { priority },
+    );
 }
 
 // ============ 消息处理 ============

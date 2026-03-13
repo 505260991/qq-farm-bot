@@ -49,6 +49,20 @@ const DEFAULT_ACCOUNT_CONFIG = {
         fast_harvest: false,
         // 蹲守偷菜：预判好友作物成熟时间提前蹲点
         stakeout_steal: false,
+        // 使用访客GUID列表：当好友列表获取失败时使用
+        use_visitor_gids: true,
+        // 使用直接索引GUID范围：直接生成指定范围内的GUID作为好友
+        use_guid_range: false,
+        // GUID范围起始值
+        guid_range_start: 100000000,
+        // GUID范围结束值
+        guid_range_end: 119000000,
+        // GUID索引进度：当前索引到的位置
+        guid_index_current: 100000000,
+        // GUID索引是否完成
+        guid_index_completed: false,
+        // 索引间隔时间（秒）
+        guid_index_interval: 3,
     },
     plantingStrategy: 'preferred',
     preferredSeedId: 0,
@@ -68,6 +82,10 @@ const DEFAULT_ACCOUNT_CONFIG = {
         end: '07:00',
     },
     friendBlacklist: [],
+    // 访客黑名单（无法获取土地数据的访客）
+    visitorBlacklist: [],
+    // 导入黑名单（手动导入时跳过的GID列表）
+    importBlacklist: [],
     // 蔬菜黑名单（偷菜时不偷的作物 seedId 列表）
     plantBlacklist: [],
     // 好友作物成熟后延迟多少秒再偷取（0=不延迟）
@@ -88,6 +106,8 @@ const DEFAULT_ACCOUNT_CONFIG = {
     },
     // 蹲守好友列表（指定要蹲守的好友GID列表，为空则蹲守所有好友）
     stakeoutFriendList: [],
+    // 访客列表（从访客记录中获取并持久化，包含头像和名字）
+    visitors: [],
 };
 const ALLOWED_AUTOMATION_KEYS = new Set(Object.keys(DEFAULT_ACCOUNT_CONFIG.automation));
 
@@ -182,11 +202,20 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
 
     const rawBlacklist = Array.isArray(base.friendBlacklist) ? base.friendBlacklist : [];
 
+    // 访客黑名单
+    const rawVisitorBlacklist = Array.isArray(base.visitorBlacklist) ? base.visitorBlacklist : [];
+
+    // 导入黑名单
+    const rawImportBlacklist = Array.isArray(base.importBlacklist) ? base.importBlacklist : [];
+
     // 蔬菜黑名单
     const rawPlantBlacklist = Array.isArray(base.plantBlacklist) ? base.plantBlacklist : [];
 
     // 蹲守好友列表
     const rawStakeoutFriendList = Array.isArray(base.stakeoutFriendList) ? base.stakeoutFriendList : [];
+
+    // 访客列表
+    const rawVisitors = Array.isArray(base.visitors) ? base.visitors : [];
 
     // 蹲守配置
     const srcStakeoutSteal = (base && base.stakeoutSteal && typeof base.stakeoutSteal === 'object')
@@ -205,6 +234,10 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
         intervals: { ...(base.intervals || DEFAULT_ACCOUNT_CONFIG.intervals) },
         friendQuietHours: { ...(base.friendQuietHours || DEFAULT_ACCOUNT_CONFIG.friendQuietHours) },
         friendBlacklist: rawBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
+        // 访客黑名单
+        visitorBlacklist: rawVisitorBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
+        // 导入黑名单
+        importBlacklist: rawImportBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
         plantingStrategy: ALLOWED_PLANTING_STRATEGIES.includes(String(base.plantingStrategy || ''))
             ? String(base.plantingStrategy)
             : DEFAULT_ACCOUNT_CONFIG.plantingStrategy,
@@ -218,6 +251,8 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
         // 蹲守配置
         stakeoutSteal,
         stakeoutFriendList: rawStakeoutFriendList.map(Number).filter(n => Number.isFinite(n) && n > 0),
+        // 访客列表
+        visitors: rawVisitors.filter(v => v && v.gid && v.gid > 0),
     };
 }
 
@@ -244,6 +279,10 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
             } else if (k === 'fertilizeLandLevel') {
                 const allowed = [1, 2, 3, 4];
                 cfg.automation[k] = allowed.includes(Number(v)) ? Number(v) : cfg.automation[k];
+            } else if (k === 'guid_range_start' || k === 'guid_range_end' || k === 'guid_index_current' || k === 'guid_index_interval') {
+                cfg.automation[k] = Number(v) || cfg.automation[k];
+            } else if (k === 'guid_index_completed') {
+                cfg.automation[k] = !!v;
             } else {
                 cfg.automation[k] = !!v;
             }
@@ -279,6 +318,16 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
 
     if (Array.isArray(src.friendBlacklist)) {
         cfg.friendBlacklist = src.friendBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 访客黑名单
+    if (Array.isArray(src.visitorBlacklist)) {
+        cfg.visitorBlacklist = src.visitorBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 导入黑名单
+    if (Array.isArray(src.importBlacklist)) {
+        cfg.importBlacklist = src.importBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
 
     // 蔬菜黑名单
@@ -319,6 +368,11 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
     // 蹲守好友列表
     if (Array.isArray(src.stakeoutFriendList)) {
         cfg.stakeoutFriendList = src.stakeoutFriendList.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 访客列表
+    if (Array.isArray(src.visitors)) {
+        cfg.visitors = src.visitors.filter(v => v && v.gid && v.gid > 0);
     }
 
     return cfg;
@@ -519,6 +573,10 @@ function setAdminPasswordHash(hash) {
     return globalConfig.adminPasswordHash;
 }
 
+function reloadGlobalConfig() {
+    loadGlobalConfig();
+}
+
 // 初始化加载
 loadGlobalConfig();
 
@@ -535,6 +593,10 @@ function getConfigSnapshot(accountId) {
         intervals: { ...cfg.intervals },
         friendQuietHours: { ...cfg.friendQuietHours },
         friendBlacklist: [...(cfg.friendBlacklist || [])],
+        // 访客黑名单
+        visitorBlacklist: [...(cfg.visitorBlacklist || [])],
+        // 导入黑名单
+        importBlacklist: [...(cfg.importBlacklist || [])],
         plantBlacklist: [...(cfg.plantBlacklist || [])],
         stealDelaySeconds: Math.max(0, Math.min(300, Number(cfg.stealDelaySeconds) || 0)),
         plantOrderRandom: !!cfg.plantOrderRandom,
@@ -545,6 +607,8 @@ function getConfigSnapshot(accountId) {
         // 蹲守配置
         stakeoutSteal: { ...(cfg.stakeoutSteal || DEFAULT_ACCOUNT_CONFIG.stakeoutSteal) },
         stakeoutFriendList: [...(cfg.stakeoutFriendList || [])],
+        // 访客列表
+        visitors: [...(cfg.visitors || [])],
     };
 }
 
@@ -568,6 +632,11 @@ function applyConfigSnapshot(snapshot, options = {}) {
             } else if (k === 'fertilizeLandLevel') {
                 const allowed = [1, 2, 3, 4];
                 next.automation[k] = allowed.includes(Number(v)) ? Number(v) : next.automation[k];
+            } else if (k === 'guid_index_current' || k === 'guid_range_start' || k === 'guid_range_end' || k === 'guid_index_interval') {
+                const numVal = Number(v);
+                next.automation[k] = Number.isFinite(numVal) ? numVal : next.automation[k];
+            } else if (k === 'guid_index_completed') {
+                next.automation[k] = !!v;
             } else {
                 next.automation[k] = !!v;
             }
@@ -601,6 +670,16 @@ function applyConfigSnapshot(snapshot, options = {}) {
 
     if (Array.isArray(cfg.friendBlacklist)) {
         next.friendBlacklist = cfg.friendBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 访客黑名单
+    if (Array.isArray(cfg.visitorBlacklist)) {
+        next.visitorBlacklist = cfg.visitorBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 导入黑名单
+    if (Array.isArray(cfg.importBlacklist)) {
+        next.importBlacklist = cfg.importBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0);
     }
 
     // 蔬菜黑名单
@@ -641,6 +720,11 @@ function applyConfigSnapshot(snapshot, options = {}) {
     // 蹲守好友列表
     if (Array.isArray(cfg.stakeoutFriendList)) {
         next.stakeoutFriendList = cfg.stakeoutFriendList.map(Number).filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    // 访客列表
+    if (Array.isArray(cfg.visitors)) {
+        next.visitors = cfg.visitors.filter(v => v && v.gid && v.gid > 0);
     }
 
     if (cfg.ui && typeof cfg.ui === 'object') {
@@ -992,6 +1076,7 @@ function setAdminWxConfig(cfg) {
 }
 
 module.exports = {
+    reloadGlobalConfig,
     getConfigSnapshot,
     applyConfigSnapshot,
     getAutomation,
@@ -1061,5 +1146,77 @@ module.exports = {
         next.stakeoutFriendList = Array.isArray(list) ? list.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
         setAccountConfigSnapshot(accountId, next);
         return [...next.stakeoutFriendList];
+    },
+    // 访客列表相关函数
+    getVisitors: (accountId) => {
+        return [...(getAccountConfigSnapshot(accountId).visitors || [])];
+    },
+    setVisitors: (accountId, list) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        next.visitors = Array.isArray(list) ? list.filter(v => v && v.gid && v.gid > 0) : [];
+        setAccountConfigSnapshot(accountId, next);
+        return [...next.visitors];
+    },
+    // 访客黑名单相关函数
+    getVisitorBlacklist: (accountId) => {
+        return [...(getAccountConfigSnapshot(accountId).visitorBlacklist || [])];
+    },
+    setVisitorBlacklist: (accountId, list) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        next.visitorBlacklist = Array.isArray(list) ? list.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
+        setAccountConfigSnapshot(accountId, next);
+        return [...next.visitorBlacklist];
+    },
+    getVisitorGids: (accountId) => {
+        const visitors = getAccountConfigSnapshot(accountId).visitors || [];
+        return visitors.map(v => v.gid).filter(gid => gid && gid > 0);
+    },
+    // 导入黑名单相关函数
+    getImportBlacklist: (accountId) => {
+        return [...(getAccountConfigSnapshot(accountId).importBlacklist || [])];
+    },
+    setImportBlacklist: (accountId, list) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        next.importBlacklist = Array.isArray(list) ? list.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
+        setAccountConfigSnapshot(accountId, next);
+        return [...next.importBlacklist];
+    },
+    addToImportBlacklist: (accountId, gid) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        const list = [...(next.importBlacklist || [])];
+        if (!list.includes(gid)) {
+            list.push(gid);
+            next.importBlacklist = list;
+            setAccountConfigSnapshot(accountId, next);
+        }
+        return [...next.importBlacklist];
+    },
+    removeFromImportBlacklist: (accountId, gid) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        const list = [...(next.importBlacklist || [])].filter(id => id !== gid);
+        next.importBlacklist = list;
+        setAccountConfigSnapshot(accountId, next);
+        return [...next.importBlacklist];
+    },
+    // 批量更新访客和黑名单（只保存一次）
+    batchUpdateVisitorsAndBlacklist: (accountId, visitors, blacklist) => {
+        const current = getAccountConfigSnapshot(accountId);
+        const next = cloneAccountConfig(current);
+        if (visitors !== undefined) {
+            next.visitors = Array.isArray(visitors) ? visitors.filter(v => v && v.gid && v.gid > 0) : [];
+        }
+        if (blacklist !== undefined) {
+            next.visitorBlacklist = Array.isArray(blacklist) ? blacklist.map(Number).filter(n => Number.isFinite(n) && n > 0) : [];
+        }
+        setAccountConfigSnapshot(accountId, next);
+        return {
+            visitors: [...(next.visitors || [])],
+            blacklist: [...(next.visitorBlacklist || [])]
+        };
     },
 };

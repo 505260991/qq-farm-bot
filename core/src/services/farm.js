@@ -992,7 +992,7 @@ async function getLandsDetail() {
             });
         }
 
-        const status = summarizeLandDetails(landsReply.lands);
+        const status = summarizeLandDetails(lands);
         return {
             lands,
             summary: status,
@@ -1847,7 +1847,7 @@ async function syncFastHarvestTasks(lands) {
     if (!config.enabled) {
         // 如果秒收取被禁用，清除所有待执行任务
         if (fastHarvestTasks.size > 0) {
-            for (const [landId, taskInfo] of fastHarvestTasks) {
+            for (const [, taskInfo] of fastHarvestTasks) {
                 farmScheduler.clear(taskInfo.taskId);
             }
             fastHarvestTasks.clear();
@@ -1949,7 +1949,7 @@ function getActiveFastHarvestTasks() {
  * 清除所有秒收取任务
  */
 function clearAllFastHarvestTasks() {
-    for (const [landId, taskInfo] of fastHarvestTasks) {
+    for (const [, taskInfo] of fastHarvestTasks) {
         farmScheduler.clear(taskInfo.taskId);
     }
     fastHarvestTasks.clear();

@@ -1,7 +1,7 @@
 import { useStorage } from '@vueuse/core'
-import axios from 'axios'
 import NProgress from 'nprogress'
 import { createRouter, createWebHistory } from 'vue-router'
+import api from '@/api'
 import { menuRoutes } from './menu'
 import 'nprogress/nprogress.css'
 
@@ -9,26 +9,30 @@ NProgress.configure({ showSpinner: false })
 
 const adminToken = useStorage('admin_token', '')
 let validatedToken = ''
+let validatedAt = 0
 let validatingPromise: Promise<boolean> | null = null
+const TOKEN_VALIDATE_TTL_MS = 30_000
 
 async function ensureTokenValid() {
   const token = String(adminToken.value || '').trim()
   if (!token)
     return false
 
-  if (validatedToken && validatedToken === token)
+  if (validatedToken && validatedToken === token && (Date.now() - validatedAt) < TOKEN_VALIDATE_TTL_MS)
     return true
 
   if (validatingPromise)
     return validatingPromise
 
-  validatingPromise = axios.get('/api/auth/validate', {
+  validatingPromise = api.get('/api/auth/validate', {
     headers: { 'x-admin-token': token },
     timeout: 6000,
   }).then((res) => {
     const ok = !!(res.data && res.data.ok)
-    if (ok)
+    if (ok) {
       validatedToken = token
+      validatedAt = Date.now()
+    }
     return ok
   }).catch(() => false).finally(() => {
     validatingPromise = null

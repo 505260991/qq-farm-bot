@@ -1,6 +1,8 @@
+import type { ApiResult } from '@/api/result'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import api from '@/api'
+import { isApiOk } from '@/api/result'
 import { useAccountStore } from '@/stores/account'
 
 export const useBagStore = defineStore('bag', () => {
@@ -36,11 +38,13 @@ export const useBagStore = defineStore('bag', () => {
       const curId = String((acc.currentAccountId as { value?: string })?.value ?? acc.currentAccountId ?? '')
       if (curId !== requestedId)
         return
-      if (res.data.ok && res.data.data) {
-        allItems.value = Array.isArray(res.data.data.items) ? res.data.data.items : []
-        originalItems.value = Array.isArray(res.data.data.originalItems) ? res.data.data.originalItems : []
+
+      const data = res.data as ApiResult<{ items?: any[], originalItems?: any[] }>
+      if (isApiOk(data)) {
+        allItems.value = Array.isArray(data.data?.items) ? data.data.items : []
+        originalItems.value = Array.isArray(data.data?.originalItems) ? data.data.originalItems : []
       }
-      else if (res.data && res.data.ok === false && res.data.error) {
+      else {
         allItems.value = []
         originalItems.value = []
       }

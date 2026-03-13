@@ -1,7 +1,9 @@
+import type { ApiResult } from '@/api/result'
 import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import api from '@/api'
+import { unwrapOk } from '@/api/result'
 
 export interface Account {
   id: string
@@ -51,15 +53,14 @@ export const useAccountStore = defineStore('account', () => {
     try {
       // api interceptor adds x-admin-token
       const res = await api.get('/api/accounts')
-      if (res.data.ok && res.data.data && res.data.data.accounts) {
-        accounts.value = res.data.data.accounts
+      const data = unwrapOk<{ accounts: Account[] }>(res.data as ApiResult<{ accounts: Account[] }>, '获取账号失败')
+      accounts.value = Array.isArray(data.accounts) ? data.accounts : []
 
-        // Auto-select first account if none selected or selected not found
-        if (accounts.value.length > 0) {
-          const found = accounts.value.find(a => String(a.id) === currentAccountId.value)
-          if (!found && accounts.value[0]) {
-            currentAccountId.value = String(accounts.value[0].id)
-          }
+      // Auto-select first account if none selected or selected not found
+      if (accounts.value.length > 0) {
+        const found = accounts.value.find(a => String(a.id) === currentAccountId.value)
+        if (!found && accounts.value[0]) {
+          currentAccountId.value = String(accounts.value[0].id)
         }
       }
     }
